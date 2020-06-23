@@ -1,14 +1,17 @@
 from dataclasses import dataclass
 from enum import IntEnum
+from typing import List
 import socket
+
 
 """
 https://www.dataq.com/products/di-4108-e/
 """
 
 
-@dataclass
+@dataclass()
 class DQEnums:
+    @dataclass()
     class ID(IntEnum):
         DQCOMMAND = int("0x31415926", 0)
         DQRESPONSE = int("0x21712818", 0)
@@ -18,6 +21,7 @@ class DQEnums:
         DQTHUMBSTREAM = int("0x16180339", 0)
         DQWHCHDR = int("0x05772156", 0)
 
+    @dataclass()
     class Command(IntEnum):
         SYNCSTART = 1
         SYNC = 2
@@ -34,8 +38,14 @@ class DQEnums:
         UDPDEBUG = 20
         USBDRIVECOMMAND = 22
 
+
+@dataclass()
+class DQMasks:
+    @dataclass()
     class DQ4108:
+        @dataclass()
         class ScanListDefinition:
+            @dataclass()
             class AnalogScale:
                 # The last four bits represent the values defined in the table on page 44 of the
                 # Data Acquisition Communications Protocol pdf. Of the 16 bit command, these bits
@@ -48,6 +58,7 @@ class DQEnums:
                 PN_0V5 = 5 << __bit_shift
                 PN_0V2 = 6 << __bit_shift
 
+            @dataclass()
             class RateRange:
                 __bit_shift = 8
                 rate_50KHz = 1 << __bit_shift
@@ -63,24 +74,84 @@ class DQEnums:
                 rate_20Hz = 11 << __bit_shift
                 rate_10Hz = 12 << __bit_shift
 
+            @dataclass()
             class AnalogIn:
                 __bit_shift = 0
-                ch0 = 0 << __bit_shift
-                ch1 = 1 << __bit_shift
-                ch2 = 2 << __bit_shift
-                ch3 = 3 << __bit_shift
-                ch4 = 4 << __bit_shift
-                ch5 = 5 << __bit_shift
-                ch6 = 6 << __bit_shift
-                ch7 = 7 << __bit_shift
+                ch1 = 0 << __bit_shift
+                ch2 = 1 << __bit_shift
+                ch3 = 2 << __bit_shift
+                ch4 = 3 << __bit_shift
+                ch5 = 4 << __bit_shift
+                ch6 = 5 << __bit_shift
+                ch7 = 6 << __bit_shift
+                ch8 = 7 << __bit_shift
 
+            @dataclass()
             class DigitalIn:
                 __bit_shift = 0
-                ch0 = 4 << __bit_shift
+                ch1 = 4 << __bit_shift
 
+            @dataclass()
             class CountIn:
                 __bit_shift = 0
-                ch0 = 6 << __bit_shift
+                ch1 = 6 << __bit_shift
+
+
+@dataclass()
+class DQDataStructures:
+    @dataclass()
+    class DQ4108:
+        @dataclass()
+        class BinaryStreamOutput:
+            analog1: List[int]
+            analog2: List[int]
+            analog3: List[int]
+            analog4: List[int]
+            analog5: List[int]
+            analog6: List[int]
+            analog7: List[int]
+            analog8: List[int]
+            digital1: List[int]
+            digital2: List[int]
+
+            channel_carryover_index: int
+            cumulative_samples_received: int
+
+
+class DQDataContainer:
+    def __init__(self, device_order, dq_data_structure):
+        self.device_order = device_order
+        self.dq_data_structure = dq_data_structure
+
+
+@dataclass
+class DQCommandResponseStructures:
+    @dataclass
+    class DQCommand:
+        id: DQEnums.ID  # aka Type
+        public_key: int  # aka GroupID
+        command: DQEnums.Command
+        par1: int
+        par2: int
+        par3: int
+        payload: str
+
+    @dataclass()
+    class DQResponse:
+        id: DQEnums.ID
+        public_key: int
+        order: int  # Order of the instrument when used as a member of a sync group
+        payload_length: int
+        payload: chr
+
+    @dataclass()
+    class DQAdcData:
+        id: DQEnums.ID
+        public_key: int
+        order: int
+        cumulative_count: int
+        payload_length: int
+        adc_data: int  # note this should be short but python does not have this a a type...
 
 
 @dataclass
@@ -91,50 +162,6 @@ class DQPorts:
 
     logger_command_local_port: int  # this is fixed on the device
     logger_command_data_client_port: int
-
-
-@dataclass
-class DQCommand:
-    id: DQEnums.ID  # aka Type
-    public_key: int  # aka GroupID
-    command: DQEnums.Command
-    par1: int
-    par2: int
-    par3: int
-    payload: str
-
-
-@dataclass
-class DQResponse:
-    id: DQEnums.ID
-    public_key: int
-    order: int  # Order of the instrument when used as a member of a sync group
-    payload_length: int
-    payload: chr
-
-
-@dataclass
-class DQAdcData:
-    id: DQEnums.ID
-    public_key: int
-    order: int
-    cumulative_count: int
-    payload_length: int
-    adc_data: int  # note this should be short but python does not have this a a type...
-
-
-@dataclass
-class DQ4108BinaryStreamOutput:
-    analog0: int
-    analog1: int
-    analog2: int
-    analog3: int
-    analog4: int
-    analog5: int
-    analog6: int
-    analog7: int
-    digital0: int
-    digital1: int
 
 
 class DataqCommsManager:
@@ -150,7 +177,7 @@ class DataqCommsManager:
         self.byte_order = 'little'
         self.is_signed = False
 
-        self.sample_count_per_device = [self.sync_device_count]
+        self.sample_count_received_per_device = [self.sync_device_count]
         self.fill_index = [self.sync_device_count]
 
         rows, cols = (self.sync_device_count, self.device_adc_buffer_size)
@@ -159,6 +186,45 @@ class DataqCommsManager:
         self.gap_count = 0
         self.b_gap = False
 
+        self.scan_list_configuration = []
+        self.dataq_group_container = []
+
+        for device_order in range(self.sync_device_count):
+            __analog_ch1_list = []
+            __analog_ch2_list = []
+            __analog_ch3_list = []
+            __analog_ch4_list = []
+            __analog_ch5_list = []
+
+            __analog_ch6_list = []
+            __analog_ch7_list = []
+            __analog_ch8_list = []
+            __digital_ch1_list = []
+            __digital_ch2_list = []
+            __carryover_channel_index = 0
+            __cumulative_samples_received = 0
+
+            dataq_logger_data = DQDataStructures.DQ4108.BinaryStreamOutput(
+                                                                        __analog_ch1_list,
+                                                                        __analog_ch2_list,
+                                                                        __analog_ch3_list,
+                                                                        __analog_ch4_list,
+                                                                        __analog_ch5_list,
+
+                                                                        __analog_ch6_list,
+                                                                        __analog_ch7_list,
+                                                                        __analog_ch8_list,
+                                                                        __digital_ch1_list,
+                                                                        __digital_ch2_list,
+                                                                        __carryover_channel_index,
+                                                                        __cumulative_samples_received
+            )
+
+            self.dataq_group_container.append(DQDataContainer(device_order, dataq_logger_data))
+
+        """
+        UDP Socket Code
+        """
         # drowan_TODO_20200618: Code needed to deal with exceptions.
         # THIS IS VERY MUCH DEBUG/PROOF OF CONCEPT CODE THAT NEEDS WORK.
         self.udp_command_socket = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
@@ -209,14 +275,14 @@ class DataqCommsManager:
 
         try:
             response_from_logger = self.udp_response_socket.recv(buffer_size)
-            self.process_response(response_from_logger)
+            self.process_response_alt(response_from_logger)
         except Exception as e:
             print(e)
 
     # process_response is a port of the parse_udp function demonstrated in the 4208UDP
     # C# example provide by dataq
     # THIS IS A WORK IN PROGRESS
-    def process_response(self, responses_from_logger):
+    def process_response_csharp(self, response_from_logger):
         print("processing response")
 
         # myId = 0
@@ -227,79 +293,183 @@ class DataqCommsManager:
         myNumOfChan = 0
         myRealigned = 0
 
-        response_id = int.from_bytes(responses_from_logger[0:4], byteorder=self.byte_order)
+        response_id = int.from_bytes(response_from_logger[0:4], byteorder=self.byte_order)
         response_public_key = 0
-        response_order = 0
+        responsding_device_order = 0
         response_payload_length = 0
 
         # check if the response carriers a group ID
-        if len(responses_from_logger) > 8:
-            response_public_key = int.from_bytes(responses_from_logger[4:8], byteorder=self.byte_order)
+        if len(response_from_logger) > 8:
+            response_public_key = int.from_bytes(response_from_logger[4:8], byteorder=self.byte_order)
         else:
             response_public_key = 0
 
         # logger order for multi logger setups
-        if len(responses_from_logger) > 12:
-            response_order = int.from_bytes(responses_from_logger[8:12], byteorder=self.byte_order)
+        if len(response_from_logger) > 12:
+            responsding_device_order = int.from_bytes(response_from_logger[8:12], byteorder=self.byte_order)
             # drowan_NOTES_20200618: TBD what this is used for...
-            myRealigned = response_order
+            myRealigned = responsding_device_order
         else:
-            response_order = 0
+            responsding_device_order = 0
             myRealigned = 0
 
         # this may cap the number of devices, ignore orders beyond the count?
-        if response_order >= self.sync_device_count:
-            response_order = self.sync_device_count
-        if response_order < 0:
-            response_order = 0
+        if responsding_device_order >= self.sync_device_count:
+            responsding_device_order = self.sync_device_count
+        if responsding_device_order < 0:
+            responsding_device_order = 0
 
         # the "switch" to process the packets
         if response_id == DQEnums.ID.DQADCDATA:
             print("Got DQADCDATA")
             # drowan_TODO_20200618: working on DQADCDATA portion of port, line 575
-            cumulative_count = int.from_bytes(responses_from_logger[12:16], byteorder=self.byte_order)
-            payload_length = int.from_bytes(responses_from_logger[16:20], byteorder=self.byte_order)
+            cumulative_sample_count_reported = int.from_bytes(response_from_logger[12:16], byteorder=self.byte_order)
+            payload_sample_count = int.from_bytes(response_from_logger[16:20], byteorder=self.byte_order)
 
-            i_not_sure = cumulative_count - self.sample_count_per_device[response_order]
+            missing_sample_count = cumulative_sample_count_reported - self.sample_count_received_per_device[responsding_device_order]
 
-            if i_not_sure != 0:
+            # create fake data to fill any gaps
+            if missing_sample_count != 0:
                 self.gap_count += 1
                 self.b_gap = True
-                # create fake data to fill in gap
 
-                for i in range(cumulative_count - self.sample_count_per_device[response_order]):
-                    self.adc_data_buffer[response_order][self.fill_index[response_order]] = 3  # event markers???
-                    self.fill_index[response_order] += 1
+                for i in range(cumulative_sample_count_reported - self.sample_count_received_per_device[responsding_device_order]):
+                    self.adc_data_buffer[responsding_device_order][self.fill_index[responsding_device_order]] = 3  # event markers???
+                    self.fill_index[responsding_device_order] += 1
 
-                    if self.fill_index[response_order] >= self.device_adc_buffer_size:
-                        self.fill_index[response_order] = 0
-                self.sample_count_per_device[response_order] = cumulative_count
+                    if self.fill_index[responsding_device_order] >= self.device_adc_buffer_size:
+                        self.fill_index[responsding_device_order] = 0
+                self.sample_count_received_per_device[responsding_device_order] = cumulative_sample_count_reported
 
-            for i in range(payload_length):
-                sample_start_index = 20 + i
-                n = int.from_bytes(responses_from_logger[sample_start_index:sample_start_index+4], byteorder=self.byte_order)
+            # the payload length is defined by the chosen packet size. The bytes sent are divided amongst the number
+            # of channels being read in
+            for i in range(payload_sample_count):
+                sample_start_index = 20 + i * 2
+                n = int.from_bytes(response_from_logger[sample_start_index:sample_start_index + 4], byteorder=self.byte_order)
                 m = int('0xfffc', 0)
 
-                print(n)
+                result = int(n & m)
 
-                x = self.adc_data_buffer[response_order][self.fill_index[response_order]] = int(n & m)
+                print("n raw: ", n, " m: ", m, " result: ", result)
 
-                print(x)
+                self.adc_data_buffer[responsding_device_order][self.fill_index[responsding_device_order]] = result
 
-                self.fill_index[response_order] += 1
-                if self.fill_index[response_order] >= self.device_adc_buffer_size:
-                    self.fill_index[response_order] = 0
+                self.fill_index[responsding_device_order] += 1
+                if self.fill_index[responsding_device_order] >= self.device_adc_buffer_size:
+                    self.fill_index[responsding_device_order] = 0
 
-                self.sample_count_per_device[response_order] = self.sample_count_per_device[response_order] + payload_length
+                self.sample_count_received_per_device[responsding_device_order] = self.sample_count_received_per_device[responsding_device_order] + payload_sample_count
 
-            print(self.adc_data_buffer[response_order][self.fill_index[response_order]])
+            # print(self.adc_data_buffer[responsding_device_order][self.fill_index[responsding_device_order]])
 
             return 1
 
         elif response_id == DQEnums.ID.DQRESPONSE:
             print("Got DQRESPONSE")
-            payload_length = int.from_bytes(responses_from_logger[12:16], byteorder=self.byte_order)
-            payload = responses_from_logger[16:16 + payload_length]
+            payload_sample_count = int.from_bytes(response_from_logger[12:16], byteorder=self.byte_order)
+            payload = response_from_logger[16:16 + payload_sample_count]
+            payload = payload.decode("utf-8").replace('\r', '')
+            print("response: ", payload)
+            return 0
+        else:
+            print("Got unknown command!")
+
+        return 0
+
+    def process_response_alt(self, response_from_logger):
+        # print("processing response alt")
+
+        response_id = int.from_bytes(response_from_logger[0:4], byteorder=self.byte_order)
+        response_public_key = 0
+        responding_device_order = 0
+        response_payload_length = 0
+
+        # check if the response carriers a group ID
+        if len(response_from_logger) > 8:
+            response_public_key = int.from_bytes(response_from_logger[4:8], byteorder=self.byte_order)
+        else:
+            response_public_key = 0
+
+        # logger order for multi logger setups
+        if len(response_from_logger) > 12:
+            responding_device_order = int.from_bytes(response_from_logger[8:12], byteorder=self.byte_order)
+        else:
+            responding_device_order = 0
+
+        # this may cap the number of devices, ignore orders beyond the count?
+        if responding_device_order >= self.sync_device_count:
+            responding_device_order = self.sync_device_count
+        if responding_device_order < 0:
+            responding_device_order = 0
+
+        if response_id == DQEnums.ID.DQADCDATA:
+            # print("Got DQADCDATA")
+
+            cumulative_sample_count_from_device = int.from_bytes(response_from_logger[12:16], byteorder=self.byte_order)
+            payload_sample_count_from_device = int.from_bytes(response_from_logger[16:20], byteorder=self.byte_order)
+
+            missing_sample_count = \
+                cumulative_sample_count_from_device - \
+                self.dataq_group_container[responding_device_order].dq_data_structure.cumulative_samples_received
+
+            # create fake data to fill any gaps
+            if missing_sample_count != 0:
+                print("Missing smaple processing TBD")
+
+            # the payload length is defined by the chosen packet size. The bytes sent are divided amongst the number
+            # of channels being read in
+            for payload_index in range(payload_sample_count_from_device):
+                sample_start_index = 20 + payload_index * 2
+                raw_bytes = int.from_bytes(response_from_logger[sample_start_index:sample_start_index + 4], byteorder=self.byte_order)
+                byte_modifier = int('0xfffc', 0)
+
+                result = int(raw_bytes & byte_modifier)
+
+                current_channel_index = (payload_index + self.dataq_group_container[responding_device_order].dq_data_structure.channel_carryover_index) % len(self.scan_list_configuration)
+                # print("current_index: ", current_channel_index, " payload_index: ", payload_index, " carryover index: ", self.dataq_group_container[responding_device_order].dq_data_structure.channel_carryover_index)
+
+                current_channel_in_list = list(self.scan_list_configuration.keys())[current_channel_index]
+
+                if current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch1:
+                    self.dataq_group_container[responding_device_order].dq_data_structure.analog1.append(result)
+
+                elif current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch2:
+                    self.dataq_group_container[responding_device_order].dq_data_structure.analog2.append(result)
+
+                elif current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch3:
+                    self.dataq_group_container[responding_device_order].dq_data_structure.analog3.append(result)
+
+                elif current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch4:
+                    self.dataq_group_container[responding_device_order].dq_data_structure.analog4.append(result)
+
+                elif current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch5:
+                    self.dataq_group_container[responding_device_order].dq_data_structure.analog5.append(result)
+
+                elif current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch6:
+                    self.dataq_group_container[responding_device_order].dq_data_structure.analog6.append(result)
+
+                elif current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch7:
+                    self.dataq_group_container[responding_device_order].dq_data_structure.analog7.append(result)
+
+                elif current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch8:
+                    self.dataq_group_container[responding_device_order].dq_data_structure.analog8.append(result)
+
+                else:
+                    print("ch not found")
+
+            self.dataq_group_container[responding_device_order].dq_data_structure.cumulative_samples_received = \
+                self.dataq_group_container[responding_device_order].dq_data_structure.cumulative_samples_received + payload_sample_count_from_device
+
+            self.dataq_group_container[responding_device_order].dq_data_structure.channel_carryover_index = current_channel_index + 1
+
+            # print("Logger Data: ", self.dataq_group_container[responding_device_order].dq_data_structure)
+            print("device reported bytes: ", cumulative_sample_count_from_device, " program count: ", self.dataq_group_container[responding_device_order].dq_data_structure.cumulative_samples_received)
+            return 1
+
+        elif response_id == DQEnums.ID.DQRESPONSE:
+            print("Got DQRESPONSE")
+            payload_sample_count = int.from_bytes(response_from_logger[12:16], byteorder=self.byte_order)
+            payload = response_from_logger[16:16 + payload_sample_count]
             payload = payload.decode("utf-8").replace('\r', '')
             print("response: ", payload)
             return 0
@@ -324,7 +494,7 @@ def main():
     my_key = int("0x06681444", 0)
 
     # Dataq notes it may be necessary to change MYKEY every time acquisition is reconfigured.
-    dq_command = DQCommand(
+    dq_command = DQCommandResponseStructures.DQCommand(
         id=DQEnums.ID.DQCOMMAND,
         public_key=my_key,
         command=DQEnums.Command.CONNECT,
@@ -365,25 +535,26 @@ def main():
     dataq_comms.send_command(dq_command)
 
     # define channel config
-    scan_list_config = {
-        DQEnums.DQ4108.ScanListDefinition.AnalogIn.ch0: DQEnums.DQ4108.ScanListDefinition.AnalogScale.PN_0V5,
-        DQEnums.DQ4108.ScanListDefinition.AnalogIn.ch1: DQEnums.DQ4108.ScanListDefinition.AnalogScale.PN_0V5,
-        DQEnums.DQ4108.ScanListDefinition.AnalogIn.ch2: DQEnums.DQ4108.ScanListDefinition.AnalogScale.PN_0V5,
-        DQEnums.DQ4108.ScanListDefinition.AnalogIn.ch3: DQEnums.DQ4108.ScanListDefinition.AnalogScale.PN_0V5
+    dataq_comms.scan_list_configuration = {
+        DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch1: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0,
+        DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch3: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0,
+        DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch4: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0,
+        DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch2: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0
     }
 
-    for config in scan_list_config:
-        dq_command.payload = "slist " + str(config) + " " + str(config | scan_list_config[config]) + "\r"
+    for config in dataq_comms.scan_list_configuration:
+        dq_command.payload = "slist " + str(config) + " " + str(config | dataq_comms.scan_list_configuration[config]) + "\r"
+        # dq_command.payload = "slist 0 3\r"
         print(dq_command.payload)
         dataq_comms.send_command(dq_command)
 
     # define scan rate - refer to page 47
-    desired_sample_rate_hz = 10
+    desired_sample_rate_hz = 600
     dividend = 60e6
     srate_setting = 0  # max is 65535
-    decimation_factor = 512  # 1 reported value per 512 samples
-    decimation_multiplier = 2  # multiply factor by 1
-    sample_rate_hz = dividend * (srate_setting * decimation_factor * decimation_multiplier)
+    decimation_factor = 10  # 512  # 1 reported value per 512 samples
+    decimation_multiplier = 1  # multiply factor by 1
+    # sample_rate_hz = dividend / (srate_setting * decimation_factor * decimation_multiplier)
 
     srate_setting = dividend / (decimation_factor * decimation_multiplier * desired_sample_rate_hz)
 
@@ -409,9 +580,12 @@ def main():
 
     # start sampling...
     x = 0
-    while x < 10:
+    while x < 10000:
         try:
-            dataq_comms.udp_response_socket.recv(1024)
+            response = dataq_comms.udp_response_socket.recv(1024)
+            dataq_comms.process_response_alt(response)
+
+            print("Channel 2: ", dataq_comms.dataq_group_container[0].dq_data_structure.analog2.pop())
         except Exception as e:
             print(e)
         x += 1
