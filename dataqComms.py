@@ -2,7 +2,10 @@ from dataclasses import dataclass
 from enum import IntEnum
 from typing import List
 import socket
-
+import logging
+import sys
+import threading
+import time
 
 """
 https://www.dataq.com/products/di-4108-e/
@@ -38,6 +41,37 @@ class DQEnums:
         UDPDEBUG = 20
         USBDRIVECOMMAND = 22
 
+    @dataclass()
+    class PacketSize(IntEnum):
+        PS_16_BYTES_DEFAULT = 0
+        PS_32_BYTES = 1
+        PS_64_BYTES = 2
+        PS_128_BYTES = 3
+        PS_256_BYTES = 4
+        PS_512_BYTES = 5
+        PS_1024_BYTES = 6
+        PS_2048_BYTES = 7
+
+    @dataclass()
+    class InfoRequests(IntEnum):
+        MFG = 0
+        MODEL = 1
+        FIRMWARE_REV = 2
+        DEVICE_STRING = 5
+        SERIAL_NO = 6
+        SAMPLE_RATE = 9
+
+    @dataclass()
+    class DeviceRole(IntEnum):
+        MASTER = 0
+        SLAVE = 1
+        STANDALONE = 2
+
+    @dataclass()
+    class Encoding(IntEnum):
+        BINARY_DEFAULT = 0
+        ASCII = 1
+
 
 @dataclass()
 class DQMasks:
@@ -51,12 +85,12 @@ class DQMasks:
                 # Data Acquisition Communications Protocol pdf. Of the 16 bit command, these bits
                 # would be 15:8. The upper bits are unused and marked 0
                 __bit_shift = 8
-                PN_10V0 = 1 << __bit_shift
-                PN_5V0 = 2 << __bit_shift
-                PN_2V0 = 3 << __bit_shift
-                PN_1V0 = 4 << __bit_shift
-                PN_0V5 = 5 << __bit_shift
-                PN_0V2 = 6 << __bit_shift
+                PN_10V0 = 0 << __bit_shift
+                PN_5V0 = 1 << __bit_shift
+                PN_2V0 = 2 << __bit_shift
+                PN_1V0 = 3 << __bit_shift
+                PN_0V5 = 4 << __bit_shift
+                PN_0V2 = 5 << __bit_shift
 
             @dataclass()
             class RateRange:
@@ -114,17 +148,15 @@ class DQDataStructures:
             digital1: List[int]
             digital2: List[int]
 
-            channel_carryover_index: int
+            # channel_carryover_index keeps track of which channel the first byte within the received packet should go
+            # to. For example, if three channels are being sampled and the packet size is 4, the first three bytes
+            # will line up but the fourth will be the start of another first channel byte. The next received packet
+            # will have its first byte start for the second channel.
+            channel_packet_carryover_index: int
             cumulative_samples_received: int
 
 
-class DQDataContainer:
-    def __init__(self, device_order, dq_data_structure):
-        self.device_order = device_order
-        self.dq_data_structure = dq_data_structure
-
-
-@dataclass
+@dataclass()
 class DQCommandResponseStructures:
     @dataclass
     class DQCommand:
@@ -154,7 +186,7 @@ class DQCommandResponseStructures:
         adc_data: int  # note this should be short but python does not have this a a type...
 
 
-@dataclass
+@dataclass()
 class DQPorts:
     # port numbers are from the loggers perspective
     logger_discovery_local_port: int  # this is fixed on the device
@@ -164,29 +196,50 @@ class DQPorts:
     logger_command_data_client_port: int
 
 
+@dataclass()
+class DQDeviceConfiguration:
+    encode: DQEnums.Encoding
+    ps: DQEnums.PacketSize
+    dec: int
+    deca: int
+    s_rate: int
+    s_list: []
+    device_role: DQEnums.DeviceRole
+    device_group_order: int
+    device_group_key_id: int
+
+
+class DQDataContainer:
+    def __init__(self, device_order, dq_data_structure):
+        self.device_order = device_order
+        self.dq_data_structure = dq_data_structure
+
+
+# https://www.loggly.com/ultimate-guide/python-logging-basics/
+logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
+
+
 class DataqCommsManager:
 
-    def __init__(self, dq_ports, logger_ip):
-        self.dq_ports = dq_ports
+    def __init__(self, dq_ports, logger_ip, client_ip):
+        self.log = logging.getLogger("DataqCommsManager")
 
-        # drowan_NOTES_20200618: TBD sync device count
-        self.sync_device_count = 5
-        self.device_adc_buffer_size = 10  # 100000
+        self.dq_ports = dq_ports
+        self.logger_ip = logger_ip
+        self.client_ip = client_ip
+
+        # drowan_NOTES_20200618: Only one device used so setting to 1
+        self.sync_device_count = 1
         self.receive_timeout_sec = 2
+
+        self.keep_alive_thread_enable = False
+        self.keep_alive_thread = None
 
         self.byte_order = 'little'
         self.is_signed = False
 
-        self.sample_count_received_per_device = [self.sync_device_count]
-        self.fill_index = [self.sync_device_count]
+        self.device_configuration = None
 
-        rows, cols = (self.sync_device_count, self.device_adc_buffer_size)
-        self.adc_data_buffer = [[0] * cols] * rows
-
-        self.gap_count = 0
-        self.b_gap = False
-
-        self.scan_list_configuration = []
         self.dataq_group_container = []
 
         for device_order in range(self.sync_device_count):
@@ -205,44 +258,234 @@ class DataqCommsManager:
             __cumulative_samples_received = 0
 
             dataq_logger_data = DQDataStructures.DQ4108.BinaryStreamOutput(
-                                                                        __analog_ch1_list,
-                                                                        __analog_ch2_list,
-                                                                        __analog_ch3_list,
-                                                                        __analog_ch4_list,
-                                                                        __analog_ch5_list,
+                __analog_ch1_list,
+                __analog_ch2_list,
+                __analog_ch3_list,
+                __analog_ch4_list,
+                __analog_ch5_list,
 
-                                                                        __analog_ch6_list,
-                                                                        __analog_ch7_list,
-                                                                        __analog_ch8_list,
-                                                                        __digital_ch1_list,
-                                                                        __digital_ch2_list,
-                                                                        __carryover_channel_index,
-                                                                        __cumulative_samples_received
+                __analog_ch6_list,
+                __analog_ch7_list,
+                __analog_ch8_list,
+                __digital_ch1_list,
+                __digital_ch2_list,
+                __carryover_channel_index,
+                __cumulative_samples_received
             )
 
             self.dataq_group_container.append(DQDataContainer(device_order, dataq_logger_data))
 
         """
-        UDP Socket Code
+        # drowan_NOTES_20200624: The variables between this note and the string of ### is
+        # used for the C# port that I attempted. I am keeping it here for context.
+        # CSharp Code ##########################################################################
+        self.device_adc_buffer_size = 10  # 100000
+        self.sample_count_received_per_device = [self.sync_device_count]
+        self.fill_index = [self.sync_device_count]
+
+        rows, cols = (self.sync_device_count, self.device_adc_buffer_size)
+        self.adc_data_buffer = [[0] * cols] * rows
+
+        self.gap_count = 0
+        self.b_gap = False
+        # CSharp Code ##########################################################################
         """
-        # drowan_TODO_20200618: Code needed to deal with exceptions.
-        # THIS IS VERY MUCH DEBUG/PROOF OF CONCEPT CODE THAT NEEDS WORK.
+
+        """
+        UDP Socket Config
+        """
+
+        # Where to send the data I think, need to look further into this...
+        self.dataq_server_address_and_port = (self.logger_ip, self.dq_ports.logger_command_local_port)
+
+        # UDP Command Socket Setup
         self.udp_command_socket = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
         self.udp_command_socket.settimeout(self.receive_timeout_sec)
-
-        self.dataq_server_address_and_port = (logger_ip, self.dq_ports.logger_command_local_port)
         self.client_outbound_address_and_port = ("0.0.0.0", self.dq_ports.logger_command_data_client_port)
 
-        self.udp_command_socket.bind(self.client_outbound_address_and_port)
-
+        # UDP Response Socket Setup
         self.udp_response_socket = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
         self.udp_response_socket.settimeout(self.receive_timeout_sec)
-
         self.client_inbound_address_and_port = ("0.0.0.0", self.dq_ports.logger_discovery_remote_port)
 
-        self.udp_response_socket.bind(self.client_inbound_address_and_port)
+    def initialize_socket(self):
+        name = "initialize_socket"
+        self.log.info(name)
+        try:
+            self.udp_command_socket.bind(self.client_outbound_address_and_port)
+        except socket.error as e:
+            self.log.exception(name + ": ")
+            return 0
+
+        try:
+            self.udp_response_socket.bind(self.client_inbound_address_and_port)
+        except socket.error as e:
+            self.log.exception(name + ": ")
+            return 0
+
+        # drowan_TODO_20200624: test the connection
+
+        # everything went OK
+        return 1
+
+    def configure_and_connect_device(self, configuration):
+        name = "configure_and_connect_device"
+        self.log.info(name + ": " + repr(configuration))
+
+        self.device_configuration = configuration
+
+        scan_list = configuration.s_list
+
+        # configure key, connection, role, group
+        dq_command = DQCommandResponseStructures.DQCommand(
+            id=DQEnums.ID.DQCOMMAND,
+            public_key=self.device_configuration.device_group_key_id,
+            command=DQEnums.Command.CONNECT,
+            par1=self.dq_ports.logger_discovery_remote_port,
+            par2=self.device_configuration.device_role,
+            par3=self.device_configuration.device_group_order,
+            payload=self.client_ip
+        )
+
+        command_ok = self.send_command(dq_command)
+
+        if not command_ok:
+            self.log.error(name + ": command error")
+
+        # configure encoding
+        dq_command.command = DQEnums.Command.SECONDCOMMAND
+        dq_command.par1 = 0
+        dq_command.par2 = 0
+        dq_command.par3 = 0
+        dq_command.payload = "encode " + str(int(self.device_configuration.encode)) + "\r"
+
+        self.send_command(dq_command)
+
+        # configure packet size
+        dq_command.command = DQEnums.Command.SECONDCOMMAND
+        dq_command.par1 = 0
+        dq_command.par2 = 0
+        dq_command.par3 = 0
+        dq_command.payload = "ps " + str(int(self.device_configuration.ps)) + "\r"
+
+        self.send_command(dq_command)
+
+        # configure srate
+        dq_command.command = DQEnums.Command.SECONDCOMMAND
+        dq_command.par1 = 0
+        dq_command.par2 = 0
+        dq_command.par3 = 0
+        dq_command.payload = "srate " + str(int(self.device_configuration.s_rate)) + "\r"
+
+        self.send_command(dq_command)
+
+        # configure dec
+        dq_command.command = DQEnums.Command.SECONDCOMMAND
+        dq_command.par1 = 0
+        dq_command.par2 = 0
+        dq_command.par3 = 0
+        dq_command.payload = "dec " + str(int(self.device_configuration.dec)) + "\r"
+
+        self.send_command(dq_command)
+
+        # configure deca
+        dq_command.command = DQEnums.Command.SECONDCOMMAND
+        dq_command.par1 = 0
+        dq_command.par2 = 0
+        dq_command.par3 = 0
+        dq_command.payload = "deca " + str(int(self.device_configuration.deca)) + "\r"
+
+        self.send_command(dq_command)
+
+        # configure keep alive
+        dq_command.command = DQEnums.Command.SECONDCOMMAND
+        dq_command.par1 = 0
+        dq_command.par2 = 0
+        dq_command.par3 = 0
+        dq_command.payload = "keepalive 8000\r"
+
+        self.send_command(dq_command)
+
+        for scan_config in scan_list:
+            dq_command.payload = "slist " + str(scan_config) + " " + str(
+                scan_config | scan_list[scan_config]) + "\r"
+            self.log.info("slist config " + dq_command.payload)
+            self.send_command(dq_command)
+
+        self.keep_alive_thread_enable = True
+
+        self.keep_alive_thread = threading.Thread(target=self.keep_alive_runnable)
+        self.keep_alive_thread.start()
+
+    def start_acquisition(self):
+        name = "start_acquisition"
+        self.log.info(name)
+
+        # configure key, connection, role, group
+        dq_command = DQCommandResponseStructures.DQCommand(
+            id=DQEnums.ID.DQCOMMAND,
+            public_key=self.device_configuration.device_group_key_id,
+            command=DQEnums.Command.SYNCSTART,
+            par1=0,
+            par2=0,
+            par3=0,
+            payload="start 0\r"
+        )
+
+        command_ok = self.send_command(dq_command)
+
+        if not command_ok:
+            self.log.error(name + " command error")
+
+    def stop_acquisition(self):
+        name = "stop_acquisition"
+        self.log.info(name)
+
+        # configure key, connection, role, group
+        dq_command = DQCommandResponseStructures.DQCommand(
+            id=DQEnums.ID.DQCOMMAND,
+            public_key=self.device_configuration.device_group_key_id,
+            command=DQEnums.Command.SYNCSTOP,
+            par1=0,
+            par2=0,
+            par3=0,
+            payload="stop\r"
+        )
+
+        command_ok = self.send_command(dq_command)
+
+        if not command_ok:
+            self.log.error(name + " command error")
+
+    def disconnect_device(self):
+        name = "disconnect_device"
+        self.log.info(name)
+
+        # send disconnect command
+        dq_command = DQCommandResponseStructures.DQCommand(
+            id=DQEnums.ID.DQCOMMAND,
+            public_key=self.device_configuration.device_group_key_id,
+            command=DQEnums.Command.DISCONNECT,
+            par1=0,
+            par2=0,
+            par3=0,
+            payload="disconnect\r"
+        )
+
+        command_ok = self.send_command(dq_command)
+
+        if not command_ok:
+            self.log.error(name + " command error")
+
+        self.keep_alive_thread_enable = False
+        self.keep_alive_thread.join()
+
+        self.udp_command_socket.close()
+        self.udp_response_socket.close()
 
     def send_command(self, dq_command):
+        name = "send_command"
+        self.log.info(name + ": " + repr(dq_command))
 
         command_string = ''
         id_byte = dq_command.id.to_bytes(4, byteorder=self.byte_order, signed=self.is_signed)
@@ -260,28 +503,56 @@ class DataqCommsManager:
                          par3_byte + \
                          dq_command.payload.encode('utf-8')
 
-        # print(command_string)
-
-        # for char in command_string:
-        #    print(hex(char), end="")
-        # print("\n\r")
-
-        # output = ''.join('%02x' % char for char in command_string)
-        # print(output)
-
         self.udp_command_socket.sendto(command_string, self.dataq_server_address_and_port)
 
         buffer_size = 1024
 
         try:
             response_from_logger = self.udp_response_socket.recv(buffer_size)
-            self.process_response_alt(response_from_logger)
-        except Exception as e:
-            print(e)
+            response_ok = self.process_response(response_from_logger)
 
+            if not response_ok:
+                self.log.error(name + ": got bad response")
+                return 0
+            else:
+                return 1
+
+        except socket.error as e:
+            self.log.exception(name + ": ")
+            self.log.warning(name + ": Code to handle exception needed!")
+            return 0
+
+    def keep_alive_runnable(self):
+        name = "keep_alive_runnable"
+        self.log.info(name)
+
+        while self.keep_alive_thread_enable:
+            # configure key, connection, role, group
+            dq_command = DQCommandResponseStructures.DQCommand(
+                id=DQEnums.ID.DQCOMMAND,
+                public_key=self.device_configuration.device_group_key_id,
+                command=DQEnums.Command.KEEPALIVE,
+                par1=0,
+                par2=0,
+                par3=0,
+                payload="keepalive\r"
+            )
+
+            command_ok = self.send_command(dq_command)
+
+            if not command_ok:
+                self.log.error(name + " command error")
+
+            # just chose 6 seconds
+            time.sleep(6)
+
+        self.log.info(name + ": exiting...")
+
+    """
     # process_response is a port of the parse_udp function demonstrated in the 4208UDP
     # C# example provide by dataq
-    # THIS IS A WORK IN PROGRESS
+    # The port is not used since it was difficult to follow. I recreated the functionality in a manner that
+    # I believe will work for multiple loggers. This would need to be tested at a future date.
     def process_response_csharp(self, response_from_logger):
         print("processing response")
 
@@ -326,15 +597,18 @@ class DataqCommsManager:
             cumulative_sample_count_reported = int.from_bytes(response_from_logger[12:16], byteorder=self.byte_order)
             payload_sample_count = int.from_bytes(response_from_logger[16:20], byteorder=self.byte_order)
 
-            missing_sample_count = cumulative_sample_count_reported - self.sample_count_received_per_device[responsding_device_order]
+            missing_sample_count = cumulative_sample_count_reported - self.sample_count_received_per_device[
+                responsding_device_order]
 
             # create fake data to fill any gaps
             if missing_sample_count != 0:
                 self.gap_count += 1
                 self.b_gap = True
 
-                for i in range(cumulative_sample_count_reported - self.sample_count_received_per_device[responsding_device_order]):
-                    self.adc_data_buffer[responsding_device_order][self.fill_index[responsding_device_order]] = 3  # event markers???
+                for i in range(cumulative_sample_count_reported - self.sample_count_received_per_device[
+                    responsding_device_order]):
+                    self.adc_data_buffer[responsding_device_order][
+                        self.fill_index[responsding_device_order]] = 3  # event markers???
                     self.fill_index[responsding_device_order] += 1
 
                     if self.fill_index[responsding_device_order] >= self.device_adc_buffer_size:
@@ -345,7 +619,8 @@ class DataqCommsManager:
             # of channels being read in
             for i in range(payload_sample_count):
                 sample_start_index = 20 + i * 2
-                n = int.from_bytes(response_from_logger[sample_start_index:sample_start_index + 4], byteorder=self.byte_order)
+                n = int.from_bytes(response_from_logger[sample_start_index:sample_start_index + 4],
+                                   byteorder=self.byte_order)
                 m = int('0xfffc', 0)
 
                 result = int(n & m)
@@ -358,7 +633,8 @@ class DataqCommsManager:
                 if self.fill_index[responsding_device_order] >= self.device_adc_buffer_size:
                     self.fill_index[responsding_device_order] = 0
 
-                self.sample_count_received_per_device[responsding_device_order] = self.sample_count_received_per_device[responsding_device_order] + payload_sample_count
+                self.sample_count_received_per_device[responsding_device_order] = self.sample_count_received_per_device[
+                                                                                      responsding_device_order] + payload_sample_count
 
             # print(self.adc_data_buffer[responsding_device_order][self.fill_index[responsding_device_order]])
 
@@ -375,14 +651,15 @@ class DataqCommsManager:
             print("Got unknown command!")
 
         return 0
+    """
 
-    def process_response_alt(self, response_from_logger):
-        # print("processing response alt")
+    def process_response(self, response_from_logger):
+        name = "process_response"
+        self.log.info(name)
 
         response_id = int.from_bytes(response_from_logger[0:4], byteorder=self.byte_order)
         response_public_key = 0
         responding_device_order = 0
-        response_payload_length = 0
 
         # check if the response carriers a group ID
         if len(response_from_logger) > 8:
@@ -403,7 +680,10 @@ class DataqCommsManager:
             responding_device_order = 0
 
         if response_id == DQEnums.ID.DQADCDATA:
-            # print("Got DQADCDATA")
+            self.log.info(name + ": processing DQADCDATA")
+
+            # init to something so its not a null reference
+            current_channel_index = 0
 
             cumulative_sample_count_from_device = int.from_bytes(response_from_logger[12:16], byteorder=self.byte_order)
             payload_sample_count_from_device = int.from_bytes(response_from_logger[16:20], byteorder=self.byte_order)
@@ -414,21 +694,31 @@ class DataqCommsManager:
 
             # create fake data to fill any gaps
             if missing_sample_count != 0:
-                print("Missing smaple processing TBD")
+                # drowan_TODO_20200624: make code to deal with missing samples
+                self.log.warning(name + ": missing samples detected! Code to mitigate not implemented yet!")
 
             # the payload length is defined by the chosen packet size. The bytes sent are divided amongst the number
             # of channels being read in
             for payload_index in range(payload_sample_count_from_device):
                 sample_start_index = 20 + payload_index * 2
-                raw_bytes = int.from_bytes(response_from_logger[sample_start_index:sample_start_index + 4], byteorder=self.byte_order)
+                raw_bytes = int.from_bytes(response_from_logger[sample_start_index:sample_start_index + 4],
+                                           byteorder=self.byte_order)
                 byte_modifier = int('0xfffc', 0)
 
                 result = int(raw_bytes & byte_modifier)
 
-                current_channel_index = (payload_index + self.dataq_group_container[responding_device_order].dq_data_structure.channel_carryover_index) % len(self.scan_list_configuration)
-                # print("current_index: ", current_channel_index, " payload_index: ", payload_index, " carryover index: ", self.dataq_group_container[responding_device_order].dq_data_structure.channel_carryover_index)
+                current_channel_index = (payload_index + self.dataq_group_container[
+                    responding_device_order].dq_data_structure.channel_packet_carryover_index) % len(
+                    self.device_configuration.s_list)
 
-                current_channel_in_list = list(self.scan_list_configuration.keys())[current_channel_index]
+                self.log.debug(
+                    name + ": " +
+                    "\n\tcurrent_channel_index: " + str(current_channel_index) +
+                    "\n\tpayload_index: " + str(payload_index) +
+                    "\n\tchannel_carryover_index: " + str(self.dataq_group_container[responding_device_order].dq_data_structure.channel_packet_carryover_index)
+                )
+
+                current_channel_in_list = list(self.device_configuration.s_list.keys())[current_channel_index]
 
                 if current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch1:
                     self.dataq_group_container[responding_device_order].dq_data_structure.analog1.append(result)
@@ -455,33 +745,42 @@ class DataqCommsManager:
                     self.dataq_group_container[responding_device_order].dq_data_structure.analog8.append(result)
 
                 else:
-                    print("ch not found")
+                    self.log.warning(name + ": channel not found in list: " + current_channel_in_list)
 
             self.dataq_group_container[responding_device_order].dq_data_structure.cumulative_samples_received = \
-                self.dataq_group_container[responding_device_order].dq_data_structure.cumulative_samples_received + payload_sample_count_from_device
+                self.dataq_group_container[
+                    responding_device_order].dq_data_structure.cumulative_samples_received + payload_sample_count_from_device
 
-            self.dataq_group_container[responding_device_order].dq_data_structure.channel_carryover_index = current_channel_index + 1
+            self.dataq_group_container[
+                responding_device_order].dq_data_structure.channel_packet_carryover_index = current_channel_index + 1
 
-            # print("Logger Data: ", self.dataq_group_container[responding_device_order].dq_data_structure)
-            print("device reported bytes: ", cumulative_sample_count_from_device, " program count: ", self.dataq_group_container[responding_device_order].dq_data_structure.cumulative_samples_received)
+            self.log.debug(
+                name + ": " +
+                "\n\tcumulative_sample_count_from_device: " + str(cumulative_sample_count_from_device) +
+                "\n\tcumulative_samples_received: " + str(self.dataq_group_container[responding_device_order].dq_data_structure.cumulative_samples_received)
+            )
+
             return 1
 
         elif response_id == DQEnums.ID.DQRESPONSE:
-            print("Got DQRESPONSE")
+            self.log.info(name + ": processing DQRESPONSE")
             payload_sample_count = int.from_bytes(response_from_logger[12:16], byteorder=self.byte_order)
             payload = response_from_logger[16:16 + payload_sample_count]
             payload = payload.decode("utf-8").replace('\r', '')
-            print("response: ", payload)
-            return 0
-        else:
-            print("Got unknown command!")
+            self.log.debug(name + ": response: " + payload)
 
-        return 0
+            # drowan_TODO_20200624: create code that actually checks against the responses
+            self.log.warning(name + ": code to assess response not implemented yet!")
+            return 1
+        else:
+            self.log.warning(name + ": rejecting unknown command")
+            return 0
 
 
 def main():
-    print("Main...")
+    print("Entering main")
 
+    # define ports, IPs, keys
     dq_ports = DQPorts(
         logger_discovery_local_port=1235,
         logger_discovery_remote_port=1234,
@@ -490,115 +789,72 @@ def main():
     )
 
     logger_ip = "192.168.1.209"
+    client_ip = "192.168.1.3"
 
-    my_key = int("0x06681444", 0)
-
-    # Dataq notes it may be necessary to change MYKEY every time acquisition is reconfigured.
-    dq_command = DQCommandResponseStructures.DQCommand(
-        id=DQEnums.ID.DQCOMMAND,
-        public_key=my_key,
-        command=DQEnums.Command.CONNECT,
-        par1=dq_ports.logger_discovery_remote_port,
-        par2=1,  # master
-        par3=0,  # device order in group
-        payload="192.168.1.3"  # IP of Host
-    )
-
-    dataq_comms = DataqCommsManager(dq_ports, logger_ip)
-
-    dataq_comms.send_command(dq_command)
-
-    # modify for second command
-    dq_command.id = DQEnums.ID.DQCOMMAND
-    dq_command.public_key = my_key
-    dq_command.command = DQEnums.Command.SECONDCOMMAND
-    dq_command.par1 = 0
-    dq_command.par2 = 0
-    dq_command.par3 = 0
-    dq_command.payload = "info 1\r"
-
-    dataq_comms.send_command(dq_command)
-
-    # setup multi-unit sync
-    # not using multiple devices at this time
-
-    # set device time
-
-    # set encoding - using already present packet info above
-    dq_command.payload = "encode 0\r"
-
-    dataq_comms.send_command(dq_command)
-
-    # set packet size
-    dq_command.payload = "ps 0\r"
-
-    dataq_comms.send_command(dq_command)
+    my_group_key_id = int("0x06681444", 0)
 
     # define channel config
-    dataq_comms.scan_list_configuration = {
+    scan_list_configuration = {
         DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch1: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0,
         DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch3: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0,
         DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch4: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0,
         DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch2: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0
     }
 
-    for config in dataq_comms.scan_list_configuration:
-        dq_command.payload = "slist " + str(config) + " " + str(config | dataq_comms.scan_list_configuration[config]) + "\r"
-        # dq_command.payload = "slist 0 3\r"
-        print(dq_command.payload)
-        dataq_comms.send_command(dq_command)
+    dataq_comms = DataqCommsManager(dq_ports, logger_ip, client_ip)
+
+    if dataq_comms.initialize_socket():
+        print("socket initialized")
+    else:
+        return -1
 
     # define scan rate - refer to page 47
     desired_sample_rate_hz = 600
     dividend = 60e6
-    srate_setting = 0  # max is 65535
     decimation_factor = 10  # 512  # 1 reported value per 512 samples
     decimation_multiplier = 1  # multiply factor by 1
-    # sample_rate_hz = dividend / (srate_setting * decimation_factor * decimation_multiplier)
+    srate_setting = int(dividend / (decimation_factor * decimation_multiplier * desired_sample_rate_hz))  # max is 65535
 
-    srate_setting = dividend / (decimation_factor * decimation_multiplier * desired_sample_rate_hz)
+    # create configuration
+    dataq_config = DQDeviceConfiguration(
+        encode=DQEnums.Encoding.BINARY_DEFAULT,
+        ps=DQEnums.PacketSize.PS_16_BYTES_DEFAULT,
+        dec=decimation_factor,
+        deca=decimation_multiplier,
+        s_rate=srate_setting,
+        s_list=scan_list_configuration,
+        device_role=DQEnums.DeviceRole.MASTER,
+        device_group_key_id=my_group_key_id,
+        device_group_order=0
+    )
 
-    dq_command.payload = "srate " + str(int(srate_setting)) + "\r"
+    dataq_comms.configure_and_connect_device(dataq_config)
 
-    dataq_comms.send_command(dq_command)
+    # set device time
+    # TBD
 
-    # dec and deca
-    dq_command.payload = "dec " + str(decimation_factor) + "\r"
+    # sync start/start acquisition
+    dataq_comms.start_acquisition()
 
-    dataq_comms.send_command(dq_command)
-
-    dq_command.payload = "deca " + str(decimation_multiplier) + "\r"
-
-    dataq_comms.send_command(dq_command)
-
-    # sync start/start
-    dq_command.id = DQEnums.ID.DQCOMMAND
-    dq_command.command = DQEnums.Command.SYNCSTART
-    dq_command.payload = "start 0\r"
-
-    dataq_comms.send_command(dq_command)
-
+    """
     # start sampling...
     x = 0
     while x < 10000:
         try:
             response = dataq_comms.udp_response_socket.recv(1024)
-            dataq_comms.process_response_alt(response)
+            dataq_comms.process_response(response)
 
             print("Channel 2: ", dataq_comms.dataq_group_container[0].dq_data_structure.analog2.pop())
         except Exception as e:
             print(e)
-        x += 1
-        if x % 10:
-            dq_command.id = DQEnums.ID.DQCOMMAND
-            dq_command.command = DQEnums.Command.KEEPALIVE
-            dq_command.payload = "Keep Alive\r"
-            dataq_comms.send_command(dq_command)
+    
+    """
 
     # stop
-    dq_command.payload = "stop\r"
+    dataq_comms.stop_acquisition()
 
-    dataq_comms.send_command(dq_command)
+    # disconnect
+    dataq_comms.disconnect_device()
 
 
 if __name__ == "__main__":
