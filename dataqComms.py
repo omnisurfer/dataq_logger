@@ -8,6 +8,14 @@ import threading
 import time
 
 """
+https://pythonprogramming.net/live-graphs-matplotlib-tutorial/
+"""
+
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+from matplotlib import style
+
+"""
 https://www.dataq.com/products/di-4108-e/
 """
 
@@ -334,7 +342,7 @@ class DataqCommsManager:
         # everything went OK
         return 1
 
-    def configure_and_connect_device(self, configuration, receive_data_handler):
+    def configure_and_connect_device(self, configuration: DQDeviceConfiguration, receive_data_handler):
         name = "configure_and_connect_device"
         self.log.info(name + ": " + repr(configuration))
 
@@ -507,7 +515,7 @@ class DataqCommsManager:
         self.udp_command_socket.close()
         self.udp_response_socket.close()
 
-    def send_command(self, dq_command, ignore_timeout):
+    def send_command(self, dq_command: DQEnums.Command, ignore_timeout):
         name = "send_command"
         self.log.info(name + ": " + repr(dq_command))
 
@@ -604,7 +612,7 @@ class DataqCommsManager:
 
                 # print("Channel 2: ", self.dataq_group_container[0].dq_data_structure.analog2.pop())
                 data = self.dataq_group_container[0].dq_data_structure.analog2.pop()
-                self.receive_data_handler(data)
+                self.receive_data_handler(self.dataq_group_container)
             except socket.error as e:
                 self.log.exception(name + ": ")
                 self.log.warning(name + ": Code to handle exception needed!")
@@ -840,14 +848,51 @@ class DataqCommsManager:
             return 0
 
 
-def data_consumption_handler(data):
+def data_consumption_handler(data_container: DQDataContainer):
     name = "consume_data"
     print(name)
-    print("ch2: " + str(int(data)))
+
+    print("ch 2: " + str(int(data_container[0].dq_data_structure.analog2.pop())))
+
+
+style.use('fivethirtyeight')
+fig = plt.figure()
+ax1 = fig.add_subplot(1, 1, 1)
+
+
+def animation_function(i):
+    graph_data = [
+        [1, 5],
+        [2, 3],
+        [3, 4],
+        [4, 7],
+        [5, 4],
+        [6, 3],
+        [7, 5],
+        [8, 7],
+        [9, 4],
+        [10, 4]
+    ]
+    xs = []
+    ys = []
+
+    for line in graph_data:
+        xs.append(line[0])
+        ys.append(line[1])
+    ax1.clear()
+    ax1.plot(xs, ys)
 
 
 def main():
     print("Entering main")
+
+    # debug plot code
+    # style.use('fivethirtyeight')
+    # fig = plt.figure()
+    # ax1 = fig.add_subplot(1, 1, 1)
+
+    ani = animation.FuncAnimation(fig, animation_function, interval=1000)
+    plt.show()
 
     # define ports, IPs, keys
     dq_ports = DQPorts(
