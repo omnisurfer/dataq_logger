@@ -216,7 +216,7 @@ class DQDataContainer:
 
 
 # https://www.loggly.com/ultimate-guide/python-logging-basics/
-logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
+logging.basicConfig(stream=sys.stderr, level=logging.INFO)
 
 
 class DataqCommsManager:
@@ -234,6 +234,12 @@ class DataqCommsManager:
 
         self.keep_alive_thread_enable = False
         self.keep_alive_thread = None
+        self.keep_alive_thread_event = threading.Event()
+
+        self.receive_data_thread_enable = False
+        self.receive_data_thread = None
+        self.receive_data_handler = None
+        self.receive_data_thread_event = threading.Event()
 
         self.byte_order = 'little'
         self.is_signed = False
@@ -328,11 +334,13 @@ class DataqCommsManager:
         # everything went OK
         return 1
 
-    def configure_and_connect_device(self, configuration):
+    def configure_and_connect_device(self, configuration, receive_data_handler):
         name = "configure_and_connect_device"
         self.log.info(name + ": " + repr(configuration))
 
         self.device_configuration = configuration
+
+        self.receive_data_handler = receive_data_handler
 
         scan_list = configuration.s_list
 
@@ -347,7 +355,7 @@ class DataqCommsManager:
             payload=self.client_ip
         )
 
-        command_ok = self.send_command(dq_command)
+        command_ok = self.send_command(dq_command, False)
 
         if not command_ok:
             self.log.error(name + ": command error")
@@ -359,7 +367,7 @@ class DataqCommsManager:
         dq_command.par3 = 0
         dq_command.payload = "encode " + str(int(self.device_configuration.encode)) + "\r"
 
-        self.send_command(dq_command)
+        self.send_command(dq_command, False)
 
         # configure packet size
         dq_command.command = DQEnums.Command.SECONDCOMMAND
@@ -368,7 +376,7 @@ class DataqCommsManager:
         dq_command.par3 = 0
         dq_command.payload = "ps " + str(int(self.device_configuration.ps)) + "\r"
 
-        self.send_command(dq_command)
+        self.send_command(dq_command, False)
 
         # configure srate
         dq_command.command = DQEnums.Command.SECONDCOMMAND
@@ -377,7 +385,7 @@ class DataqCommsManager:
         dq_command.par3 = 0
         dq_command.payload = "srate " + str(int(self.device_configuration.s_rate)) + "\r"
 
-        self.send_command(dq_command)
+        self.send_command(dq_command, False)
 
         # configure dec
         dq_command.command = DQEnums.Command.SECONDCOMMAND
@@ -386,7 +394,7 @@ class DataqCommsManager:
         dq_command.par3 = 0
         dq_command.payload = "dec " + str(int(self.device_configuration.dec)) + "\r"
 
-        self.send_command(dq_command)
+        self.send_command(dq_command, False)
 
         # configure deca
         dq_command.command = DQEnums.Command.SECONDCOMMAND
@@ -395,7 +403,7 @@ class DataqCommsManager:
         dq_command.par3 = 0
         dq_command.payload = "deca " + str(int(self.device_configuration.deca)) + "\r"
 
-        self.send_command(dq_command)
+        self.send_command(dq_command, False)
 
         # configure keep alive
         dq_command.command = DQEnums.Command.SECONDCOMMAND
@@ -404,22 +412,30 @@ class DataqCommsManager:
         dq_command.par3 = 0
         dq_command.payload = "keepalive 8000\r"
 
-        self.send_command(dq_command)
+        self.send_command(dq_command, False)
 
         for scan_config in scan_list:
             dq_command.payload = "slist " + str(scan_config) + " " + str(
                 scan_config | scan_list[scan_config]) + "\r"
             self.log.info("slist config " + dq_command.payload)
-            self.send_command(dq_command)
+            self.send_command(dq_command, False)
 
         self.keep_alive_thread_enable = True
-
         self.keep_alive_thread = threading.Thread(target=self.keep_alive_runnable)
+
         self.keep_alive_thread.start()
+        self.keep_alive_thread_event.set()
 
     def start_acquisition(self):
         name = "start_acquisition"
         self.log.info(name)
+
+        # start the read thread
+        self.receive_data_thread_enable = True
+        self.receive_data_thread = threading.Thread(target=self.receive_data_runnable)
+
+        self.receive_data_thread.start()
+        self.receive_data_thread_event.set()
 
         # configure key, connection, role, group
         dq_command = DQCommandResponseStructures.DQCommand(
@@ -432,7 +448,7 @@ class DataqCommsManager:
             payload="start 0\r"
         )
 
-        command_ok = self.send_command(dq_command)
+        command_ok = self.send_command(dq_command, False)
 
         if not command_ok:
             self.log.error(name + " command error")
@@ -452,10 +468,13 @@ class DataqCommsManager:
             payload="stop\r"
         )
 
-        command_ok = self.send_command(dq_command)
+        command_ok = self.send_command(dq_command, False)
 
         if not command_ok:
             self.log.error(name + " command error")
+
+        # drowan_TODO_20200624: find a way to pause the thread?
+        self.receive_data_thread_event.clear()
 
     def disconnect_device(self):
         name = "disconnect_device"
@@ -472,18 +491,23 @@ class DataqCommsManager:
             payload="disconnect\r"
         )
 
-        command_ok = self.send_command(dq_command)
+        command_ok = self.send_command(dq_command, False)
 
         if not command_ok:
             self.log.error(name + " command error")
 
         self.keep_alive_thread_enable = False
+        self.keep_alive_thread_event.set()
         self.keep_alive_thread.join()
+
+        self.receive_data_thread_enable = False
+        self.receive_data_thread_event.set()
+        self.receive_data_thread.join()
 
         self.udp_command_socket.close()
         self.udp_response_socket.close()
 
-    def send_command(self, dq_command):
+    def send_command(self, dq_command, ignore_timeout):
         name = "send_command"
         self.log.info(name + ": " + repr(dq_command))
 
@@ -507,26 +531,39 @@ class DataqCommsManager:
 
         buffer_size = 1024
 
-        try:
-            response_from_logger = self.udp_response_socket.recv(buffer_size)
-            response_ok = self.process_response(response_from_logger)
+        # this is for commands that don't echo
+        if ignore_timeout is True:
+            return 1
+        else:
+            try:
+                response_from_logger = self.udp_response_socket.recv(buffer_size)
+                response_ok = self.process_response(response_from_logger)
 
-            if not response_ok:
-                self.log.error(name + ": got bad response")
+                if not response_ok:
+                    self.log.error(name + ": got bad response")
+                    return 0
+                else:
+                    return 1
+
+            except socket.error as e:
+                self.log.exception(name + ": ")
+                self.log.warning(name + ": Code to handle exception needed!")
                 return 0
-            else:
-                return 1
-
-        except socket.error as e:
-            self.log.exception(name + ": ")
-            self.log.warning(name + ": Code to handle exception needed!")
-            return 0
 
     def keep_alive_runnable(self):
         name = "keep_alive_runnable"
         self.log.info(name)
 
-        while self.keep_alive_thread_enable:
+        while True:
+
+            if self.keep_alive_thread_enable is False:
+                self.log.info(name + ": told to exit thread")
+                break
+            else:
+                self.log.info(name + ": waiting for keep alive event")
+                self.keep_alive_thread_event.wait()
+                self.log.info(name + ": got keep alive event")
+
             # configure key, connection, role, group
             dq_command = DQCommandResponseStructures.DQCommand(
                 id=DQEnums.ID.DQCOMMAND,
@@ -538,13 +575,39 @@ class DataqCommsManager:
                 payload="keepalive\r"
             )
 
-            command_ok = self.send_command(dq_command)
+            command_ok = self.send_command(dq_command, True)
 
             if not command_ok:
                 self.log.error(name + " command error")
 
             # just chose 6 seconds
             time.sleep(6)
+
+        self.log.info(name + ": exiting...")
+
+    def receive_data_runnable(self):
+        name = "receive_data_runnable"
+
+        while True:
+
+            if self.receive_data_thread_enable is False:
+                self.log.info(name + ": told to exit thread")
+                break
+            else:
+                self.log.info(name + ": waiting for receive event")
+                self.receive_data_thread_event.wait()
+                self.log.info(name + ": got receive event")
+
+            try:
+                response = self.udp_response_socket.recv(1024)
+                self.process_response(response)
+
+                # print("Channel 2: ", self.dataq_group_container[0].dq_data_structure.analog2.pop())
+                data = self.dataq_group_container[0].dq_data_structure.analog2.pop()
+                self.receive_data_handler(data)
+            except socket.error as e:
+                self.log.exception(name + ": ")
+                self.log.warning(name + ": Code to handle exception needed!")
 
         self.log.info(name + ": exiting...")
 
@@ -777,6 +840,12 @@ class DataqCommsManager:
             return 0
 
 
+def data_consumption_handler(data):
+    name = "consume_data"
+    print(name)
+    print("ch2: " + str(int(data)))
+
+
 def main():
     print("Entering main")
 
@@ -828,7 +897,7 @@ def main():
         device_group_order=0
     )
 
-    dataq_comms.configure_and_connect_device(dataq_config)
+    dataq_comms.configure_and_connect_device(dataq_config, data_consumption_handler)
 
     # set device time
     # TBD
@@ -836,20 +905,7 @@ def main():
     # sync start/start acquisition
     dataq_comms.start_acquisition()
 
-    """
-    # start sampling...
-    x = 0
-    while x < 10000:
-        try:
-            response = dataq_comms.udp_response_socket.recv(1024)
-            dataq_comms.process_response(response)
-
-            print("Channel 2: ", dataq_comms.dataq_group_container[0].dq_data_structure.analog2.pop())
-        except Exception as e:
-            print(e)
-    
-    """
-
+    time.sleep(60)
     # stop
     dataq_comms.stop_acquisition()
 
