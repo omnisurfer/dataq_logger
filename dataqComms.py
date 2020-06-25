@@ -6,6 +6,7 @@ import logging
 import sys
 import threading
 import time
+import random
 
 """
 https://pythonprogramming.net/live-graphs-matplotlib-tutorial/
@@ -855,44 +856,51 @@ def data_consumption_handler(data_container: DQDataContainer):
     print("ch 2: " + str(int(data_container[0].dq_data_structure.analog2.pop())))
 
 
-style.use('fivethirtyeight')
-fig = plt.figure()
-ax1 = fig.add_subplot(1, 1, 1)
+# style.use('fivethirtyeight')
+fig, axes = plt.subplots(4, 1)
 
 
-def animation_function(i):
-    graph_data = [
-        [1, 5],
-        [2, 3],
-        [3, 4],
-        [4, 7],
-        [5, 4],
-        [6, 3],
-        [7, 5],
-        [8, 7],
-        [9, 4],
-        [10, 4]
-    ]
+def animation_function(frame_number):
+
+    graph_data = []
+
+    current_index = frame_number % 100
+
+    #"""
+    for x in range(100):
+        graph_data.append([x, random.random()])
+
     xs = []
     ys = []
 
     for line in graph_data:
         xs.append(line[0])
         ys.append(line[1])
-    ax1.clear()
-    ax1.plot(xs, ys)
+
+    # https://stackoverflow.com/questions/31726643/how-do-i-get-multiple-subplots-in-matplotlib
+    # https://matplotlib.org/examples/animation/basic_example.html
+    #"""
+
+    for ax in axes:
+        # ax.clear()
+        ax.set_ylim(0, 1)
+
+    # axes[0].plot(xs, ys, 'r')
+    axes[1].plot(xs, ys, 'g')
+    axes[2].plot(xs, ys, 'b')
+    axes[3].plot(xs, ys, 'k')
 
 
 def main():
     print("Entering main")
 
     # debug plot code
-    # style.use('fivethirtyeight')
-    # fig = plt.figure()
-    # ax1 = fig.add_subplot(1, 1, 1)
-
-    ani = animation.FuncAnimation(fig, animation_function, interval=1000)
+    ani = animation.FuncAnimation(fig, animation_function, interval=10, save_count=50)
     plt.show()
+
+    input("Press enter to continue...")
+
+    return 0
 
     # define ports, IPs, keys
     dq_ports = DQPorts(
