@@ -74,6 +74,48 @@ class DQEnums:
         BINARY_DEFAULT = 0
         ASCII = 1
 
+    @dataclass()
+    class SampleRate(IntEnum):
+        SAMPLE_1HZ = 1
+        SAMPLE_10HZ = 10
+        SAMPLE_100HZ = 100
+        SAMPLE_250HZ = 250
+        SAMPLE_500HZ = 500
+        SAMPLE_750HZ = 750
+        SAMPLE_1000HZ = 1000
+        SAMPLE_2500HZ = 2500
+        SAMPLE_5000HZ = 5000
+        SAMPLE_7500HZ = 7500
+        SAMPLE_10KHZ = 10000
+
+    @dataclass()
+    class DQ4108:
+
+        # rate in hz: [dec, deca]
+        PreCalculatedDecDecaDict = {
+            1: [512, 2],
+            10: [300, 2],
+            100: [10, 1],
+            250: [4, 1],
+            500: [2, 1],
+            750: [2, 1],
+            1000: [1, 1],
+            2500: [1, 1],
+            5000: [1, 1],
+            7500: [1, 1],
+            10000: [1, 1]
+        }
+
+        @dataclass()
+        class ScanRateLimits(IntEnum):
+            SRATE_MIN = 375
+            SRATE_MAX = 65535
+            DEC_MIN = 1
+            DEC_MAX = 512
+            DECA_MIN = 1
+            DECA_MAX = 40000
+            DIVIDEND = 60e6
+
 
 @dataclass()
 class DQMasks:
@@ -202,13 +244,17 @@ class DQPorts:
 class DQDeviceConfiguration:
     encode: DQEnums.Encoding
     ps: DQEnums.PacketSize
-    dec: int
-    deca: int
-    s_rate: int
     s_list: []
     device_role: DQEnums.DeviceRole
     device_group_order: int
     device_group_key_id: int
+
+
+@dataclass()
+class DQSampleConfiguration:
+    dec: int
+    deca: int
+    s_rate: int
 
 
 class DQDataContainer:
@@ -217,8 +263,9 @@ class DQDataContainer:
         self.dq_data_structure = dq_data_structure
 
 
+# Debug level and console print statements will influence scripts ability to handle large amounts of data
 # https://www.loggly.com/ultimate-guide/python-logging-basics/
-logging.basicConfig(stream=sys.stderr, level=logging.CRITICAL)
+logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
 
 
 class DataqCommsManager:
@@ -247,6 +294,11 @@ class DataqCommsManager:
         self.is_signed = False
 
         self.device_configuration = None
+        self.device_sample_configuration = DQSampleConfiguration(
+            dec=10,
+            deca=1,
+            s_rate=10000
+        )
 
         self.dataq_group_container = []
 
@@ -385,7 +437,7 @@ class DataqCommsManager:
         dq_command.par1 = 0
         dq_command.par2 = 0
         dq_command.par3 = 0
-        dq_command.payload = "srate " + str(int(self.device_configuration.s_rate)) + "\r"
+        dq_command.payload = "srate " + str(int(self.device_sample_configuration.s_rate)) + "\r"
 
         self.send_command(dq_command, False)
 
@@ -394,7 +446,7 @@ class DataqCommsManager:
         dq_command.par1 = 0
         dq_command.par2 = 0
         dq_command.par3 = 0
-        dq_command.payload = "dec " + str(int(self.device_configuration.dec)) + "\r"
+        dq_command.payload = "dec " + str(int(self.device_sample_configuration.dec)) + "\r"
 
         self.send_command(dq_command, False)
 
@@ -403,7 +455,7 @@ class DataqCommsManager:
         dq_command.par1 = 0
         dq_command.par2 = 0
         dq_command.par3 = 0
-        dq_command.payload = "deca " + str(int(self.device_configuration.deca)) + "\r"
+        dq_command.payload = "deca " + str(int(self.device_sample_configuration.deca)) + "\r"
 
         self.send_command(dq_command, False)
 
@@ -509,7 +561,7 @@ class DataqCommsManager:
         self.udp_command_socket.close()
         self.udp_response_socket.close()
 
-    def send_command(self, dq_command: DQEnums.Command, ignore_timeout):
+    def send_command(self, dq_command, ignore_timeout):
         name = "send_command"
         self.log.info(name + ": " + repr(dq_command))
 
@@ -611,8 +663,11 @@ class DataqCommsManager:
         self.log.info(name + ": exiting...")
 
     def get_voltage_scale_for_channel(self, channel_index):
+        name = "get_voltage_scale_for_channel"
 
-        configured_scale = self.device_configuration.s_list[channel_index]
+        scale_key = list(self.device_configuration.s_list)[channel_index]
+
+        configured_scale = self.device_configuration.s_list[scale_key]
 
         if configured_scale == DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0:
             return 10.0
@@ -628,6 +683,65 @@ class DataqCommsManager:
             return 0.2
         else:
             return 0.0
+
+    def set_sample_rate(self, sample_rate_hz: DQEnums.SampleRate):
+        """
+        :param dec: decimation/oversampling value
+        :param deca: decimation/oversampling multiplier
+        :param sample_rate_hz: rate to sample given device limitations. See page 47 of Dataq-Instruments-Protocol.pdf
+        :return:
+        """
+        """
+        it seems an srate of 375 causes the device to get lost in the weeds...? ~3000 srate for all 8 channels seems to be OK
+        but then the code can't keep up with throughput (~7Mbps)
+        
+        define scan rate - refer to page 47
+    
+        """
+        name = "set_desired_sample_rate"
+        self.log.info(name)
+
+        dividend = DQEnums.DQ4108.ScanRateLimits.DIVIDEND
+        # default values if nothing is found
+        dec = 10
+        deca = 1
+
+        for rate_to_compare in DQEnums.SampleRate:
+            if int(sample_rate_hz) == int(rate_to_compare):
+                dec_deca = DQEnums.DQ4108.PreCalculatedDecDecaDict[int(sample_rate_hz)]
+
+                dec = self.device_sample_configuration.dec = dec_deca[0]
+                deca = self.device_sample_configuration.deca = dec_deca[1]
+
+        self.device_sample_configuration.s_rate = int(dividend / (sample_rate_hz * dec * deca))
+
+        self.log.info(name + ": " + repr(self.device_sample_configuration))
+
+    def set_srate_dec_and_deca(self, s_rate, dec, deca):
+        """
+        Incorrect settings can cause the logger to stop working, requiring a power cycle to correct.
+        :param s_rate: set to 0 to leave unchanged
+        :param dec: set to 0 to leave unchanged
+        :param deca: set to 0 to leave unchanged
+        :return:
+        """
+        name = "set_srate_dec_and_deca"
+        self.log.info(name)
+
+        # only allow change if within bounds
+        if s_rate <= DQEnums.DQ4108.ScanRateLimits.SRATE_MAX or s_rate >= DQEnums.DQ4108.ScanRateLimits.SRATE_MIN:
+            self.device_sample_configuration.s_rate = s_rate
+
+        if dec <= DQEnums.DQ4108.ScanRateLimits.DEC_MAX or dec >= DQEnums.DQ4108.ScanRateLimits.DEC_MIN:
+            self.device_sample_configuration.dec = dec
+
+        if deca <= DQEnums.DQ4108.ScanRateLimits.DECA_MAX or deca >= DQEnums.DQ4108.ScanRateLimits.DECA_MIN:
+            self.device_sample_configuration.deca = deca
+
+    def get_srate_dec_and_deca(self):
+        name = "get_srate_dec_and_deca"
+        self.log.info(name)
+        return self.device_sample_configuration.s_rate, self.device_sample_configuration.dec, self.device_sample_configuration.deca
 
     """
     # process_response is a port of the parse_udp function demonstrated in the 4208UDP
@@ -769,16 +883,26 @@ class DataqCommsManager:
             cumulative_sample_count_from_device = int.from_bytes(response_from_logger[12:16], byteorder=self.byte_order)
             payload_sample_count_from_device = int.from_bytes(response_from_logger[16:20], byteorder=self.byte_order)
 
-            missing_sample_count = \
-                cumulative_sample_count_from_device - \
-                self.dataq_group_container[responding_device_order].dq_data_structure.cumulative_samples_received
+            tracked_samples_received = self.dataq_group_container[responding_device_order].dq_data_structure.cumulative_samples_received
+
+            missing_sample_count = cumulative_sample_count_from_device - tracked_samples_received
 
             # create fake data to fill any gaps
             if missing_sample_count != 0:
                 # drowan_TODO_20200624: make code to deal with missing samples
                 self.log.warning(name + ": missing samples detected! Code to mitigate not implemented yet!")
-                print("Missing Samples!")
 
+                if missing_sample_count % 100000 == 0:
+                    percent_loss = int((cumulative_sample_count_from_device - tracked_samples_received)/cumulative_sample_count_from_device * 100)
+                    print("Missing Samples! Loss%: " + str(percent_loss))
+                    """
+                      str(int(tracked_samples_received/cumulative_sample_count_from_device * 100)) +
+                      "Got: " + tracked_samples_received +
+                      " Sent: " + str(cumulative_sample_count_from_device) +
+                      " Diff: " + str(missing_sample_count) +
+                      " Diff: " + str(missing_sample_count))
+                      )
+                    """
             # the payload length is defined by the chosen packet size. The bytes sent are divided amongst the number
             # of channels being read in
             for payload_index in range(payload_sample_count_from_device):
@@ -917,6 +1041,7 @@ def data_consumption_handler(data_container: DQDataContainer):
     for i in range(len(data_container[0].dq_data_structure.analog8)):
         channel_8_voltages.append(data_container[0].dq_data_structure.analog8.pop())
 
+#"""
     print("ch1: " + str(len(channel_1_voltages)) +
           " ch2: " + str(len(channel_2_voltages)) +
           " ch3: " + str(len(channel_3_voltages)) +
@@ -926,6 +1051,7 @@ def data_consumption_handler(data_container: DQDataContainer):
           " ch7: " + str(len(channel_7_voltages)) +
           " ch8: " + str(len(channel_8_voltages))
           )
+#"""
 
 
 def main():
@@ -951,37 +1077,30 @@ def main():
     # define channel config - channel 1 must be configured and first in the list even if ch 1 is not used
     scan_list_configuration = {
         DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch1: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0,
-        DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch3: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0,
+        DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch3: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_5V0,
         DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch4: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0,
-        DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch2: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0
+        DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch2: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0,
 
-        # DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch5: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0,
-        # DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch6: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0,
-        # DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch7: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0,
-        # DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch8: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0
+        DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch5: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0,
+        DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch6: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0,
+        DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch7: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0,
+        DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch8: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0
     }
 
     dataq_comms = DataqCommsManager(dq_ports, logger_ip, client_ip)
 
+    dataq_comms.set_sample_rate(DQEnums.SampleRate.SAMPLE_1000HZ)
+
     if dataq_comms.initialize_socket():
         print("socket initialized")
     else:
+        print("failed to initialize socket")
         return -1
-
-    # define scan rate - refer to page 47
-    desired_sample_rate_hz = 600
-    dividend = 60e6
-    decimation_factor = 10  # 512  # 1 reported value per 512 samples
-    decimation_multiplier = 1  # multiply factor by 1
-    srate_setting = int(dividend / (decimation_factor * decimation_multiplier * desired_sample_rate_hz))  # max is 65535
 
     # create configuration
     dataq_config = DQDeviceConfiguration(
         encode=DQEnums.Encoding.BINARY_DEFAULT,
         ps=DQEnums.PacketSize.PS_16_BYTES_DEFAULT,
-        dec=decimation_factor,
-        deca=decimation_multiplier,
-        s_rate=srate_setting,
         s_list=scan_list_configuration,
         device_role=DQEnums.DeviceRole.MASTER,
         device_group_key_id=my_group_key_id,
