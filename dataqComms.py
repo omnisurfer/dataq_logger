@@ -8,13 +8,6 @@ import threading
 import time
 import random
 
-"""
-https://pythonprogramming.net/live-graphs-matplotlib-tutorial/
-"""
-
-import matplotlib.pyplot as plt
-import matplotlib.animation as animation
-from matplotlib import style
 
 """
 https://www.dataq.com/products/di-4108-e/
@@ -94,28 +87,28 @@ class DQMasks:
                 # Data Acquisition Communications Protocol pdf. Of the 16 bit command, these bits
                 # would be 15:8. The upper bits are unused and marked 0
                 __bit_shift = 8
-                PN_10V0 = 0 << __bit_shift
-                PN_5V0 = 1 << __bit_shift
-                PN_2V0 = 2 << __bit_shift
-                PN_1V0 = 3 << __bit_shift
-                PN_0V5 = 4 << __bit_shift
-                PN_0V2 = 5 << __bit_shift
+                PN_10V0 = (0 << __bit_shift)
+                PN_5V0 = (1 << __bit_shift)
+                PN_2V0 = (2 << __bit_shift)
+                PN_1V0 = (3 << __bit_shift)
+                PN_0V5 = (4 << __bit_shift)
+                PN_0V2 = (5 << __bit_shift)
 
             @dataclass()
-            class RateRange:
+            class RateRangeTable:
                 __bit_shift = 8
-                rate_50KHz = 1 << __bit_shift
-                rate_20KHz = 2 << __bit_shift
-                rate_10KHz = 3 << __bit_shift
-                rate_5KHz = 4 << __bit_shift
-                rate_2KHz = 5 << __bit_shift
-                rate_1KHz = 6 << __bit_shift
-                rate_500Hz = 7 << __bit_shift
-                rate_200Hz = 8 << __bit_shift
-                rate_100Hz = 9 << __bit_shift
-                rate_50Hz = 10 << __bit_shift
-                rate_20Hz = 11 << __bit_shift
-                rate_10Hz = 12 << __bit_shift
+                rate_50KHz = 1 << __bit_shift | 9
+                rate_20KHz = 2 << __bit_shift | 9
+                rate_10KHz = 3 << __bit_shift | 9
+                rate_5KHz = 4 << __bit_shift | 9
+                rate_2KHz = 5 << __bit_shift | 9
+                rate_1KHz = 6 << __bit_shift | 9
+                rate_500Hz = 7 << __bit_shift | 9
+                rate_200Hz = 8 << __bit_shift | 9
+                rate_100Hz = 9 << __bit_shift | 9
+                rate_50Hz = 10 << __bit_shift | 9
+                rate_20Hz = 11 << __bit_shift | 9
+                rate_10Hz = 12 << __bit_shift | 9
 
             @dataclass()
             class AnalogIn:
@@ -225,7 +218,7 @@ class DQDataContainer:
 
 
 # https://www.loggly.com/ultimate-guide/python-logging-basics/
-logging.basicConfig(stream=sys.stderr, level=logging.INFO)
+logging.basicConfig(stream=sys.stderr, level=logging.CRITICAL)
 
 
 class DataqCommsManager:
@@ -610,15 +603,31 @@ class DataqCommsManager:
             try:
                 response = self.udp_response_socket.recv(1024)
                 self.process_response(response)
-
-                # print("Channel 2: ", self.dataq_group_container[0].dq_data_structure.analog2.pop())
-                data = self.dataq_group_container[0].dq_data_structure.analog2.pop()
                 self.receive_data_handler(self.dataq_group_container)
             except socket.error as e:
                 self.log.exception(name + ": ")
                 self.log.warning(name + ": Code to handle exception needed!")
 
         self.log.info(name + ": exiting...")
+
+    def get_voltage_scale_for_channel(self, channel_index):
+
+        configured_scale = self.device_configuration.s_list[channel_index]
+
+        if configured_scale == DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0:
+            return 10.0
+        elif configured_scale == DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_5V0:
+            return 5.0
+        elif configured_scale == DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_2V0:
+            return 2.0
+        elif configured_scale == DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_1V0:
+            return 1.0
+        elif configured_scale == DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_0V5:
+            return 0.5
+        elif configured_scale == DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_0V2:
+            return 0.2
+        else:
+            return 0.0
 
     """
     # process_response is a port of the parse_udp function demonstrated in the 4208UDP
@@ -768,16 +777,14 @@ class DataqCommsManager:
             if missing_sample_count != 0:
                 # drowan_TODO_20200624: make code to deal with missing samples
                 self.log.warning(name + ": missing samples detected! Code to mitigate not implemented yet!")
+                print("Missing Samples!")
 
             # the payload length is defined by the chosen packet size. The bytes sent are divided amongst the number
             # of channels being read in
             for payload_index in range(payload_sample_count_from_device):
                 sample_start_index = 20 + payload_index * 2
-                raw_bytes = int.from_bytes(response_from_logger[sample_start_index:sample_start_index + 4],
+                raw_bytes = int.from_bytes(response_from_logger[sample_start_index:sample_start_index + 2],
                                            byteorder=self.byte_order)
-                byte_modifier = int('0xfffc', 0)
-
-                result = int(raw_bytes & byte_modifier)
 
                 current_channel_index = (payload_index + self.dataq_group_container[
                     responding_device_order].dq_data_structure.channel_packet_carryover_index) % len(
@@ -792,29 +799,48 @@ class DataqCommsManager:
 
                 current_channel_in_list = list(self.device_configuration.s_list.keys())[current_channel_index]
 
+                # get the channel voltage scale from the s_list
+                configured_voltage_scale = self.get_voltage_scale_for_channel(current_channel_index)
+
+                # print("raw: {0:16b}".format(raw_bytes))
+
+                byte_modifier = int('0xfffc', 0)
+
+                result = int(raw_bytes & byte_modifier)
+
+                # print("mod: {0:16b}".format(result))
+
+                # check if negative, perform twos complement conversion
+                if result & 0x8000:
+                    result = (result ^ 65535) + 1
+                    result = result * -1
+
+                # convert count into a voltage, from page 67 of Protocol pdf
+                calculated_voltage = int(configured_voltage_scale * (result / 32768))
+
                 if current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch1:
-                    self.dataq_group_container[responding_device_order].dq_data_structure.analog1.append(result)
+                    self.dataq_group_container[responding_device_order].dq_data_structure.analog1.append(calculated_voltage)
 
                 elif current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch2:
-                    self.dataq_group_container[responding_device_order].dq_data_structure.analog2.append(result)
+                    self.dataq_group_container[responding_device_order].dq_data_structure.analog2.append(calculated_voltage)
 
                 elif current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch3:
-                    self.dataq_group_container[responding_device_order].dq_data_structure.analog3.append(result)
+                    self.dataq_group_container[responding_device_order].dq_data_structure.analog3.append(calculated_voltage)
 
                 elif current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch4:
-                    self.dataq_group_container[responding_device_order].dq_data_structure.analog4.append(result)
+                    self.dataq_group_container[responding_device_order].dq_data_structure.analog4.append(calculated_voltage)
 
                 elif current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch5:
-                    self.dataq_group_container[responding_device_order].dq_data_structure.analog5.append(result)
+                    self.dataq_group_container[responding_device_order].dq_data_structure.analog5.append(calculated_voltage)
 
                 elif current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch6:
-                    self.dataq_group_container[responding_device_order].dq_data_structure.analog6.append(result)
+                    self.dataq_group_container[responding_device_order].dq_data_structure.analog6.append(calculated_voltage)
 
                 elif current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch7:
-                    self.dataq_group_container[responding_device_order].dq_data_structure.analog7.append(result)
+                    self.dataq_group_container[responding_device_order].dq_data_structure.analog7.append(calculated_voltage)
 
                 elif current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch8:
-                    self.dataq_group_container[responding_device_order].dq_data_structure.analog8.append(result)
+                    self.dataq_group_container[responding_device_order].dq_data_structure.analog8.append(calculated_voltage)
 
                 else:
                     self.log.warning(name + ": channel not found in list: " + current_channel_in_list)
@@ -849,58 +875,65 @@ class DataqCommsManager:
             return 0
 
 
+channel_1_voltages = []
+channel_2_voltages = []
+channel_3_voltages = []
+channel_4_voltages = []
+
+channel_5_voltages = []
+channel_6_voltages = []
+channel_7_voltages = []
+channel_8_voltages = []
+
+
+# make a quick copy of the data
 def data_consumption_handler(data_container: DQDataContainer):
     name = "consume_data"
-    print(name)
+    # self.log.info(name)
 
-    print("ch 2: " + str(int(data_container[0].dq_data_structure.analog2.pop())))
+    # can't iterate through the object :(, maybe make a get data method?
+    # only indexing through order 0 device, no support for additional devices yet
+    for i in range(len(data_container[0].dq_data_structure.analog1)):
+        channel_1_voltages.append(data_container[0].dq_data_structure.analog1.pop())
 
+    for i in range(len(data_container[0].dq_data_structure.analog2)):
+        channel_2_voltages.append(data_container[0].dq_data_structure.analog2.pop())
 
-# style.use('fivethirtyeight')
-fig, axes = plt.subplots(4, 1)
+    for i in range(len(data_container[0].dq_data_structure.analog3)):
+        channel_3_voltages.append(data_container[0].dq_data_structure.analog3.pop())
 
+    for i in range(len(data_container[0].dq_data_structure.analog4)):
+        channel_4_voltages.append(data_container[0].dq_data_structure.analog4.pop())
 
-def animation_function(frame_number):
+    for i in range(len(data_container[0].dq_data_structure.analog5)):
+        channel_5_voltages.append(data_container[0].dq_data_structure.analog5.pop())
 
-    graph_data = []
+    for i in range(len(data_container[0].dq_data_structure.analog6)):
+        channel_6_voltages.append(data_container[0].dq_data_structure.analog6.pop())
 
-    current_index = frame_number % 100
+    for i in range(len(data_container[0].dq_data_structure.analog7)):
+        channel_7_voltages.append(data_container[0].dq_data_structure.analog7.pop())
 
-    #"""
-    for x in range(100):
-        graph_data.append([x, random.random()])
+    for i in range(len(data_container[0].dq_data_structure.analog8)):
+        channel_8_voltages.append(data_container[0].dq_data_structure.analog8.pop())
 
-    xs = []
-    ys = []
-
-    for line in graph_data:
-        xs.append(line[0])
-        ys.append(line[1])
-
-    # https://stackoverflow.com/questions/31726643/how-do-i-get-multiple-subplots-in-matplotlib
-    # https://matplotlib.org/examples/animation/basic_example.html
-    #"""
-
-    for ax in axes:
-        # ax.clear()
-        ax.set_ylim(0, 1)
-
-    # axes[0].plot(xs, ys, 'r')
-    axes[1].plot(xs, ys, 'g')
-    axes[2].plot(xs, ys, 'b')
-    axes[3].plot(xs, ys, 'k')
+    print("ch1: " + str(len(channel_1_voltages)) +
+          " ch2: " + str(len(channel_2_voltages)) +
+          " ch3: " + str(len(channel_3_voltages)) +
+          " ch4: " + str(len(channel_4_voltages)) +
+          " ch5: " + str(len(channel_5_voltages)) +
+          " ch6: " + str(len(channel_6_voltages)) +
+          " ch7: " + str(len(channel_7_voltages)) +
+          " ch8: " + str(len(channel_8_voltages))
+          )
 
 
 def main():
     print("Entering main")
 
     # debug plot code
-    ani = animation.FuncAnimation(fig, animation_function, interval=10, save_count=50)
-    plt.show()
 
-    input("Press enter to continue...")
-
-    return 0
+    # input("Press enter to continue...")
 
     # define ports, IPs, keys
     dq_ports = DQPorts(
@@ -915,12 +948,17 @@ def main():
 
     my_group_key_id = int("0x06681444", 0)
 
-    # define channel config
+    # define channel config - channel 1 must be configured and first in the list even if ch 1 is not used
     scan_list_configuration = {
         DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch1: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0,
         DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch3: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0,
         DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch4: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0,
         DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch2: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0
+
+        # DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch5: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0,
+        # DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch6: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0,
+        # DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch7: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0,
+        # DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch8: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0
     }
 
     dataq_comms = DataqCommsManager(dq_ports, logger_ip, client_ip)
@@ -958,7 +996,8 @@ def main():
     # sync start/start acquisition
     dataq_comms.start_acquisition()
 
-    time.sleep(60)
+    input("Press enter to stop...")
+
     # stop
     dataq_comms.stop_acquisition()
 
