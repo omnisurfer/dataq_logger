@@ -8,7 +8,6 @@ import threading
 import time
 import random
 
-
 """
 https://www.dataq.com/products/di-4108-e/
 """
@@ -90,7 +89,6 @@ class DQEnums:
 
     @dataclass()
     class DQ4108:
-
         # rate in hz: [dec, deca]
         PreCalculatedDecDecaDict = {
             1: [512, 2],
@@ -181,14 +179,14 @@ class DQDataStructures:
     class DQ4108:
         @dataclass()
         class BinaryStreamOutput:
-            analog1: List[int]
-            analog2: List[int]
-            analog3: List[int]
-            analog4: List[int]
-            analog5: List[int]
-            analog6: List[int]
-            analog7: List[int]
-            analog8: List[int]
+            analog1: List[float]
+            analog2: List[float]
+            analog3: List[float]
+            analog4: List[float]
+            analog5: List[float]
+            analog6: List[float]
+            analog7: List[float]
+            analog8: List[float]
             digital1: List[int]
             digital2: List[int]
 
@@ -259,7 +257,7 @@ class DQSampleConfiguration:
 
 
 class DQDataContainer:
-    def __init__(self, device_order, dq_data_structure):
+    def __init__(self, device_order, dq_data_structure: DQDataStructures):
         self.device_order = device_order
         self.dq_data_structure = dq_data_structure
 
@@ -288,6 +286,9 @@ class DataqCommsManager:
 
         self.byte_order = 'little'
         self.is_signed = False
+
+        self.set_sample_rate_hz = 10
+
         self.buffer_overflow_detected = False
         self.buffer_overflow_exception_count = 0
 
@@ -701,6 +702,8 @@ class DataqCommsManager:
         name = "set_desired_sample_rate"
         self.log.info(name)
 
+        self.set_sample_rate_hz = sample_rate_hz
+
         dividend = DQEnums.DQ4108.ScanRateLimits.DIVIDEND
         # default values if nothing is found
         dec = 10
@@ -884,7 +887,8 @@ class DataqCommsManager:
             cumulative_sample_count_from_device = int.from_bytes(response_from_logger[12:16], byteorder=self.byte_order)
             payload_sample_count_from_device = int.from_bytes(response_from_logger[16:20], byteorder=self.byte_order)
 
-            tracked_samples_received_per_device = self.dataq_group_container[responding_device_order].dq_data_structure.cumulative_samples_received_this_device
+            tracked_samples_received_per_device = self.dataq_group_container[
+                responding_device_order].dq_data_structure.cumulative_samples_received_this_device
 
             missing_sample_count = cumulative_sample_count_from_device - tracked_samples_received_per_device
 
@@ -894,8 +898,9 @@ class DataqCommsManager:
                 missing_sample_count_this_device = self.dataq_group_container[
                     responding_device_order].dq_data_structure.cumulative_missing_samples_this_device
 
-                if missing_sample_count_this_device % 100000 == 0:
-                    percent_loss = int((1 - (cumulative_sample_count_from_device - missing_sample_count_this_device) / cumulative_sample_count_from_device) * 100)
+                if missing_sample_count_this_device % self.set_sample_rate_hz == 0:
+                    percent_loss = int((1 - (
+                                cumulative_sample_count_from_device - missing_sample_count_this_device) / cumulative_sample_count_from_device) * 100)
                     print(
                         "Missing Samples! Loss: " + str(percent_loss) + "%"
                         + " Sent: " + str(cumulative_sample_count_from_device)
@@ -972,8 +977,10 @@ class DataqCommsManager:
                         self.log.warning(name + ": channel not found in list: " + current_channel_in_list)
 
                 # update the tracked sample count to reflect the "new" faked samples
-                self.dataq_group_container[responding_device_order].dq_data_structure.cumulative_missing_samples_this_device += missing_sample_count
-                self.dataq_group_container[responding_device_order].dq_data_structure.cumulative_samples_received_this_device = cumulative_sample_count_from_device
+                self.dataq_group_container[
+                    responding_device_order].dq_data_structure.cumulative_missing_samples_this_device += missing_sample_count
+                self.dataq_group_container[
+                    responding_device_order].dq_data_structure.cumulative_samples_received_this_device = cumulative_sample_count_from_device
 
             # the payload length is defined by the chosen packet size. The bytes sent are divided amongst the number
             # of channels being read in
@@ -990,7 +997,8 @@ class DataqCommsManager:
                     name + ": " +
                     "\n\tcurrent_channel_index: " + str(current_channel_index) +
                     "\n\tpayload_index: " + str(payload_index) +
-                    "\n\tchannel_carryover_index: " + str(self.dataq_group_container[responding_device_order].dq_data_structure.channel_packet_carryover_index)
+                    "\n\tchannel_carryover_index: " + str(self.dataq_group_container[
+                                                              responding_device_order].dq_data_structure.channel_packet_carryover_index)
                 )
 
                 current_channel_in_list = list(self.device_configuration.s_list.keys())[current_channel_index]
@@ -1012,36 +1020,45 @@ class DataqCommsManager:
                     result = result * -1
 
                 # convert count into a voltage, from page 67 of Protocol pdf
-                calculated_voltage = int(configured_voltage_scale * (result / 32768))
+                calculated_voltage = configured_voltage_scale * (result / 32768)
 
                 if current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch1:
-                    self.dataq_group_container[responding_device_order].dq_data_structure.analog1.append(calculated_voltage)
+                    self.dataq_group_container[responding_device_order].dq_data_structure.analog1.append(
+                        calculated_voltage)
 
                 elif current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch2:
-                    self.dataq_group_container[responding_device_order].dq_data_structure.analog2.append(calculated_voltage)
+                    self.dataq_group_container[responding_device_order].dq_data_structure.analog2.append(
+                        calculated_voltage)
 
                 elif current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch3:
-                    self.dataq_group_container[responding_device_order].dq_data_structure.analog3.append(calculated_voltage)
+                    self.dataq_group_container[responding_device_order].dq_data_structure.analog3.append(
+                        calculated_voltage)
 
                 elif current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch4:
-                    self.dataq_group_container[responding_device_order].dq_data_structure.analog4.append(calculated_voltage)
+                    self.dataq_group_container[responding_device_order].dq_data_structure.analog4.append(
+                        calculated_voltage)
 
                 elif current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch5:
-                    self.dataq_group_container[responding_device_order].dq_data_structure.analog5.append(calculated_voltage)
+                    self.dataq_group_container[responding_device_order].dq_data_structure.analog5.append(
+                        calculated_voltage)
 
                 elif current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch6:
-                    self.dataq_group_container[responding_device_order].dq_data_structure.analog6.append(calculated_voltage)
+                    self.dataq_group_container[responding_device_order].dq_data_structure.analog6.append(
+                        calculated_voltage)
 
                 elif current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch7:
-                    self.dataq_group_container[responding_device_order].dq_data_structure.analog7.append(calculated_voltage)
+                    self.dataq_group_container[responding_device_order].dq_data_structure.analog7.append(
+                        calculated_voltage)
 
                 elif current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch8:
-                    self.dataq_group_container[responding_device_order].dq_data_structure.analog8.append(calculated_voltage)
+                    self.dataq_group_container[responding_device_order].dq_data_structure.analog8.append(
+                        calculated_voltage)
 
                 else:
                     self.log.warning(name + ": channel not found in list: " + current_channel_in_list)
 
-            self.dataq_group_container[responding_device_order].dq_data_structure.cumulative_samples_received_this_device = \
+            self.dataq_group_container[
+                responding_device_order].dq_data_structure.cumulative_samples_received_this_device = \
                 self.dataq_group_container[
                     responding_device_order].dq_data_structure.cumulative_samples_received_this_device + payload_sample_count_from_device
 
@@ -1051,7 +1068,8 @@ class DataqCommsManager:
             self.log.debug(
                 name + ": " +
                 "\n\tcumulative_sample_count_from_device: " + str(cumulative_sample_count_from_device) +
-                "\n\tcumulative_samples_received: " + str(self.dataq_group_container[responding_device_order].dq_data_structure.cumulative_samples_received_this_device)
+                "\n\tcumulative_samples_received: " + str(self.dataq_group_container[
+                                                              responding_device_order].dq_data_structure.cumulative_samples_received_this_device)
             )
 
             return 1
@@ -1087,6 +1105,8 @@ def data_consumption_handler(data_container: DQDataContainer):
     name = "consume_data"
     # self.log.info(name)
 
+    received_samples = data_container[0].dq_data_structure.cumulative_samples_received_this_device
+
     # can't iterate through the object :(, maybe make a get data method?
     # only indexing through order 0 device, no support for additional devices yet
     for i in range(len(data_container[0].dq_data_structure.analog1)):
@@ -1112,18 +1132,32 @@ def data_consumption_handler(data_container: DQDataContainer):
 
     for i in range(len(data_container[0].dq_data_structure.analog8)):
         channel_8_voltages.append(data_container[0].dq_data_structure.analog8.pop())
-    # """
-    if len(channel_1_voltages) % 10000 == 0:
-        print("ch1: " + str(len(channel_1_voltages)) +
-              " ch2: " + str(len(channel_2_voltages)) +
-              " ch3: " + str(len(channel_3_voltages)) +
-              " ch4: " + str(len(channel_4_voltages)) +
-              " ch5: " + str(len(channel_5_voltages)) +
-              " ch6: " + str(len(channel_6_voltages)) +
-              " ch7: " + str(len(channel_7_voltages)) +
-              " ch8: " + str(len(channel_8_voltages))
+
+        # """
+        """
+        print("Samples "
+              + "ch1: " + str(len(channel_1_voltages))
+              + " ch2: " + str(len(channel_2_voltages))
+              + " ch3: " + str(len(channel_3_voltages))
+              + " ch4: " + str(len(channel_4_voltages))
+              + " ch5: " + str(len(channel_5_voltages))
+              + " ch6: " + str(len(channel_6_voltages))
+              + " ch7: " + str(len(channel_7_voltages))
+              + " ch8: " + str(len(channel_8_voltages))
+              + " Total Sent: " + str(received_samples)
               )
-    #"""
+        """
+        print("Voltages "
+              + "ch 1: " + "{:10.2f}".format(channel_1_voltages.pop())
+              + " ch 2: " + "{:10.2f}".format(channel_2_voltages.pop())
+              + " ch 3: " + "{:10.2f}".format(channel_3_voltages.pop())
+              + " ch 4: " + "{:10.2f}".format(channel_4_voltages.pop())
+              + " ch 5: " + "{:10.2f}".format(channel_5_voltages.pop())
+              + " ch 6: " + "{:10.2f}".format(channel_6_voltages.pop())
+              + " ch 7: " + "{:10.2f}".format(channel_7_voltages.pop())
+              + " ch 8: " + "{:10.2f}".format(channel_8_voltages.pop())
+              )
+        #"""
 
 
 # Debug level and console print statements will influence scripts ability to handle large amounts of data
