@@ -1133,7 +1133,6 @@ def data_consumption_handler(data_container: DQDataContainer):
     for i in range(len(data_container[0].dq_data_structure.analog8)):
         channel_8_voltages.append(data_container[0].dq_data_structure.analog8.pop())
 
-        # """
         """
         print("Samples "
               + "ch1: " + str(len(channel_1_voltages))
@@ -1147,6 +1146,7 @@ def data_consumption_handler(data_container: DQDataContainer):
               + " Total Sent: " + str(received_samples)
               )
         """
+        #"""
         print("Voltages "
               + "ch 1: " + "{:10.2f}".format(channel_1_voltages.pop())
               + " ch 2: " + "{:10.2f}".format(channel_2_voltages.pop())
@@ -1200,7 +1200,7 @@ def main():
 
     dataq_comms = DataqCommsManager(dq_ports, logger_ip, client_ip)
 
-    dataq_comms.set_sample_rate(DQEnums.SampleRate.SAMPLE_10KHZ)
+    dataq_comms.set_sample_rate(DQEnums.SampleRate.SAMPLE_10HZ)
 
     if dataq_comms.initialize_socket():
         print("socket initialized")
