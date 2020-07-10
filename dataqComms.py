@@ -197,7 +197,8 @@ class DQDataStructures:
             # will line up but the fourth will be the start of another first channel byte. The next received packet
             # will have its first byte start for the second channel.
             channel_packet_carryover_index: int
-            cumulative_samples_received: int
+            cumulative_samples_received_this_device: int
+            cumulative_missing_samples_this_device: int
 
 
 @dataclass()
@@ -263,11 +264,6 @@ class DQDataContainer:
         self.dq_data_structure = dq_data_structure
 
 
-# Debug level and console print statements will influence scripts ability to handle large amounts of data
-# https://www.loggly.com/ultimate-guide/python-logging-basics/
-logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
-
-
 class DataqCommsManager:
 
     def __init__(self, dq_ports, logger_ip, client_ip):
@@ -292,6 +288,8 @@ class DataqCommsManager:
 
         self.byte_order = 'little'
         self.is_signed = False
+        self.buffer_overflow_detected = False
+        self.buffer_overflow_exception_count = 0
 
         self.device_configuration = None
         self.device_sample_configuration = DQSampleConfiguration(
@@ -316,6 +314,7 @@ class DataqCommsManager:
             __digital_ch2_list = []
             __carryover_channel_index = 0
             __cumulative_samples_received = 0
+            __cumulative_missing_samples = 0
 
             dataq_logger_data = DQDataStructures.DQ4108.BinaryStreamOutput(
                 __analog_ch1_list,
@@ -330,7 +329,8 @@ class DataqCommsManager:
                 __digital_ch1_list,
                 __digital_ch2_list,
                 __carryover_channel_index,
-                __cumulative_samples_received
+                __cumulative_samples_received,
+                __cumulative_missing_samples
             )
 
             self.dataq_group_container.append(DQDataContainer(device_order, dataq_logger_data))
@@ -853,6 +853,7 @@ class DataqCommsManager:
         self.log.info(name)
 
         response_id = int.from_bytes(response_from_logger[0:4], byteorder=self.byte_order)
+        # key not implemented to tell different loggers apart
         response_public_key = 0
         responding_device_order = 0
 
@@ -883,26 +884,97 @@ class DataqCommsManager:
             cumulative_sample_count_from_device = int.from_bytes(response_from_logger[12:16], byteorder=self.byte_order)
             payload_sample_count_from_device = int.from_bytes(response_from_logger[16:20], byteorder=self.byte_order)
 
-            tracked_samples_received = self.dataq_group_container[responding_device_order].dq_data_structure.cumulative_samples_received
+            tracked_samples_received_per_device = self.dataq_group_container[responding_device_order].dq_data_structure.cumulative_samples_received_this_device
 
-            missing_sample_count = cumulative_sample_count_from_device - tracked_samples_received
+            missing_sample_count = cumulative_sample_count_from_device - tracked_samples_received_per_device
 
             # create fake data to fill any gaps
             if missing_sample_count != 0:
-                # drowan_TODO_20200624: make code to deal with missing samples
-                self.log.warning(name + ": missing samples detected! Code to mitigate not implemented yet!")
 
-                if missing_sample_count % 100000 == 0:
-                    percent_loss = int((cumulative_sample_count_from_device - tracked_samples_received)/cumulative_sample_count_from_device * 100)
-                    print("Missing Samples! Loss%: " + str(percent_loss))
-                    """
-                      str(int(tracked_samples_received/cumulative_sample_count_from_device * 100)) +
-                      "Got: " + tracked_samples_received +
-                      " Sent: " + str(cumulative_sample_count_from_device) +
-                      " Diff: " + str(missing_sample_count) +
-                      " Diff: " + str(missing_sample_count))
-                      )
-                    """
+                missing_sample_count_this_device = self.dataq_group_container[
+                    responding_device_order].dq_data_structure.cumulative_missing_samples_this_device
+
+                if missing_sample_count_this_device % 100000 == 0:
+                    percent_loss = int((1 - (cumulative_sample_count_from_device - missing_sample_count_this_device) / cumulative_sample_count_from_device) * 100)
+                    print(
+                        "Missing Samples! Loss: " + str(percent_loss) + "%"
+                        + " Sent: " + str(cumulative_sample_count_from_device)
+                        + " Missing Cumulative: " + str(missing_sample_count_this_device)
+                        + " Missing Now: " + str(missing_sample_count)
+                        + ": Overflow exception count: " + str(self.buffer_overflow_exception_count)
+                    )
+
+                self.buffer_overflow_detected = True
+                self.buffer_overflow_exception_count += 1
+
+                # drowan_TODO_20200624: make code to deal with missing samples
+                # self.log.warning(name + ": created " + str(missing_sample_count) + " samples to fill gap!")
+
+                for missing_sample_index in range(missing_sample_count):
+                    # fill in the blanks across all enabled channels
+
+                    raw_bytes = 3  # value taken from C# example, not sure of significance
+
+                    current_channel_index = (missing_sample_index + self.dataq_group_container[
+                        responding_device_order].dq_data_structure.channel_packet_carryover_index) % len(
+                        self.device_configuration.s_list)
+
+                    current_channel_in_list = list(self.device_configuration.s_list.keys())[current_channel_index]
+
+                    # get the channel voltage scale from the s_list
+                    configured_voltage_scale = self.get_voltage_scale_for_channel(current_channel_index)
+
+                    byte_modifier = int('0xfffc', 0)
+
+                    result = int(raw_bytes & byte_modifier)
+
+                    # check if negative, perform twos complement conversion
+                    if result & 0x8000:
+                        result = (result ^ 65535) + 1
+                        result = result * -1
+
+                    # convert count into a voltage, from page 67 of Protocol pdf
+                    calculated_voltage = int(configured_voltage_scale * (result / 32768))
+
+                    if current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch1:
+                        self.dataq_group_container[responding_device_order].dq_data_structure.analog1.append(
+                            calculated_voltage)
+
+                    elif current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch2:
+                        self.dataq_group_container[responding_device_order].dq_data_structure.analog2.append(
+                            calculated_voltage)
+
+                    elif current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch3:
+                        self.dataq_group_container[responding_device_order].dq_data_structure.analog3.append(
+                            calculated_voltage)
+
+                    elif current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch4:
+                        self.dataq_group_container[responding_device_order].dq_data_structure.analog4.append(
+                            calculated_voltage)
+
+                    elif current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch5:
+                        self.dataq_group_container[responding_device_order].dq_data_structure.analog5.append(
+                            calculated_voltage)
+
+                    elif current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch6:
+                        self.dataq_group_container[responding_device_order].dq_data_structure.analog6.append(
+                            calculated_voltage)
+
+                    elif current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch7:
+                        self.dataq_group_container[responding_device_order].dq_data_structure.analog7.append(
+                            calculated_voltage)
+
+                    elif current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch8:
+                        self.dataq_group_container[responding_device_order].dq_data_structure.analog8.append(
+                            calculated_voltage)
+
+                    else:
+                        self.log.warning(name + ": channel not found in list: " + current_channel_in_list)
+
+                # update the tracked sample count to reflect the "new" faked samples
+                self.dataq_group_container[responding_device_order].dq_data_structure.cumulative_missing_samples_this_device += missing_sample_count
+                self.dataq_group_container[responding_device_order].dq_data_structure.cumulative_samples_received_this_device = cumulative_sample_count_from_device
+
             # the payload length is defined by the chosen packet size. The bytes sent are divided amongst the number
             # of channels being read in
             for payload_index in range(payload_sample_count_from_device):
@@ -969,9 +1041,9 @@ class DataqCommsManager:
                 else:
                     self.log.warning(name + ": channel not found in list: " + current_channel_in_list)
 
-            self.dataq_group_container[responding_device_order].dq_data_structure.cumulative_samples_received = \
+            self.dataq_group_container[responding_device_order].dq_data_structure.cumulative_samples_received_this_device = \
                 self.dataq_group_container[
-                    responding_device_order].dq_data_structure.cumulative_samples_received + payload_sample_count_from_device
+                    responding_device_order].dq_data_structure.cumulative_samples_received_this_device + payload_sample_count_from_device
 
             self.dataq_group_container[
                 responding_device_order].dq_data_structure.channel_packet_carryover_index = current_channel_index + 1
@@ -979,7 +1051,7 @@ class DataqCommsManager:
             self.log.debug(
                 name + ": " +
                 "\n\tcumulative_sample_count_from_device: " + str(cumulative_sample_count_from_device) +
-                "\n\tcumulative_samples_received: " + str(self.dataq_group_container[responding_device_order].dq_data_structure.cumulative_samples_received)
+                "\n\tcumulative_samples_received: " + str(self.dataq_group_container[responding_device_order].dq_data_structure.cumulative_samples_received_this_device)
             )
 
             return 1
@@ -1040,18 +1112,23 @@ def data_consumption_handler(data_container: DQDataContainer):
 
     for i in range(len(data_container[0].dq_data_structure.analog8)):
         channel_8_voltages.append(data_container[0].dq_data_structure.analog8.pop())
+    # """
+    if len(channel_1_voltages) % 10000 == 0:
+        print("ch1: " + str(len(channel_1_voltages)) +
+              " ch2: " + str(len(channel_2_voltages)) +
+              " ch3: " + str(len(channel_3_voltages)) +
+              " ch4: " + str(len(channel_4_voltages)) +
+              " ch5: " + str(len(channel_5_voltages)) +
+              " ch6: " + str(len(channel_6_voltages)) +
+              " ch7: " + str(len(channel_7_voltages)) +
+              " ch8: " + str(len(channel_8_voltages))
+              )
+    #"""
 
-#"""
-    print("ch1: " + str(len(channel_1_voltages)) +
-          " ch2: " + str(len(channel_2_voltages)) +
-          " ch3: " + str(len(channel_3_voltages)) +
-          " ch4: " + str(len(channel_4_voltages)) +
-          " ch5: " + str(len(channel_5_voltages)) +
-          " ch6: " + str(len(channel_6_voltages)) +
-          " ch7: " + str(len(channel_7_voltages)) +
-          " ch8: " + str(len(channel_8_voltages))
-          )
-#"""
+
+# Debug level and console print statements will influence scripts ability to handle large amounts of data
+# https://www.loggly.com/ultimate-guide/python-logging-basics/
+logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
 
 
 def main():
@@ -1089,7 +1166,7 @@ def main():
 
     dataq_comms = DataqCommsManager(dq_ports, logger_ip, client_ip)
 
-    dataq_comms.set_sample_rate(DQEnums.SampleRate.SAMPLE_1000HZ)
+    dataq_comms.set_sample_rate(DQEnums.SampleRate.SAMPLE_10KHZ)
 
     if dataq_comms.initialize_socket():
         print("socket initialized")
