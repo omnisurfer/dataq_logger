@@ -6,7 +6,7 @@ import logging
 import sys
 import threading
 import time
-import random
+import numpy as np
 
 """
 https://www.dataq.com/products/di-4108-e/
@@ -173,6 +173,7 @@ class DQMasks:
                 ch1 = 6 << __bit_shift
 
 
+# maybe one day make the class iterable?
 @dataclass()
 class DQDataStructures:
     @dataclass()
@@ -747,7 +748,7 @@ class DataqCommsManager:
         return self.device_sample_configuration.s_rate, self.device_sample_configuration.dec, self.device_sample_configuration.deca
 
     """
-    # process_response is a port of the parse_udp function demonstrated in the 4208UDP
+    # this version of process_response is an attempted port of the parse_udp function demonstrated in the 4208UDP
     # C# example provide by dataq
     # The port is not used since it was difficult to follow. I recreated the functionality in a manner that
     # I believe will work for multiple loggers. This would need to be tested at a future date.
@@ -911,9 +912,6 @@ class DataqCommsManager:
 
                 self.buffer_overflow_detected = True
                 self.buffer_overflow_exception_count += 1
-
-                # drowan_TODO_20200624: make code to deal with missing samples
-                # self.log.warning(name + ": created " + str(missing_sample_count) + " samples to fill gap!")
 
                 for missing_sample_index in range(missing_sample_count):
                     # fill in the blanks across all enabled channels
@@ -1101,68 +1099,173 @@ channel_8_voltages = []
 
 
 # make a quick copy of the data
-def data_consumption_handler(data_container: DQDataContainer):
+def dataq_data_handler(data_container: DQDataContainer):
     name = "consume_data"
     # self.log.info(name)
 
-    received_samples = data_container[0].dq_data_structure.cumulative_samples_received_this_device
+    # start with first channel and fill with the first available data set
+    for channel in channel_data:
 
-    # can't iterate through the object :(, maybe make a get data method?
-    # only indexing through order 0 device, no support for additional devices yet
-    for i in range(len(data_container[0].dq_data_structure.analog1)):
-        channel_1_voltages.append(data_container[0].dq_data_structure.analog1.pop())
+        minimum_samples_to_take = len(channel)
 
-    for i in range(len(data_container[0].dq_data_structure.analog2)):
-        channel_2_voltages.append(data_container[0].dq_data_structure.analog2.pop())
+        if len(data_container[0].dq_data_structure.analog1) > minimum_samples_to_take:
+            for i in range(minimum_samples_to_take):
+                voltage = data_container[0].dq_data_structure.analog1.pop()
 
-    for i in range(len(data_container[0].dq_data_structure.analog3)):
-        channel_3_voltages.append(data_container[0].dq_data_structure.analog3.pop())
+                channel_1_voltages.append(voltage)
 
-    for i in range(len(data_container[0].dq_data_structure.analog4)):
-        channel_4_voltages.append(data_container[0].dq_data_structure.analog4.pop())
+                channel[i] = voltage
 
-    for i in range(len(data_container[0].dq_data_structure.analog5)):
-        channel_5_voltages.append(data_container[0].dq_data_structure.analog5.pop())
+        elif len(data_container[0].dq_data_structure.analog2) > minimum_samples_to_take:
 
-    for i in range(len(data_container[0].dq_data_structure.analog6)):
-        channel_6_voltages.append(data_container[0].dq_data_structure.analog6.pop())
+            for i in range(minimum_samples_to_take):
+                voltage = data_container[0].dq_data_structure.analog2.pop()
 
-    for i in range(len(data_container[0].dq_data_structure.analog7)):
-        channel_7_voltages.append(data_container[0].dq_data_structure.analog7.pop())
+                channel_2_voltages.append(voltage)
 
-    for i in range(len(data_container[0].dq_data_structure.analog8)):
-        channel_8_voltages.append(data_container[0].dq_data_structure.analog8.pop())
+                channel[i] = voltage
 
-        """
-        print("Samples "
-              + "ch1: " + str(len(channel_1_voltages))
-              + " ch2: " + str(len(channel_2_voltages))
-              + " ch3: " + str(len(channel_3_voltages))
-              + " ch4: " + str(len(channel_4_voltages))
-              + " ch5: " + str(len(channel_5_voltages))
-              + " ch6: " + str(len(channel_6_voltages))
-              + " ch7: " + str(len(channel_7_voltages))
-              + " ch8: " + str(len(channel_8_voltages))
-              + " Total Sent: " + str(received_samples)
-              )
-        """
-        #"""
+        elif len(data_container[0].dq_data_structure.analog3) > minimum_samples_to_take:
+
+            for i in range(minimum_samples_to_take):
+                voltage = data_container[0].dq_data_structure.analog3.pop()
+
+                channel_3_voltages.append(voltage)
+
+                channel[i] = voltage
+
+        elif len(data_container[0].dq_data_structure.analog4) > minimum_samples_to_take:
+
+            for i in range(minimum_samples_to_take):
+                voltage = data_container[0].dq_data_structure.analog4.pop()
+
+                channel_4_voltages.append(voltage)
+
+                channel[i] = voltage
+
+        elif len(data_container[0].dq_data_structure.analog5) > minimum_samples_to_take:
+
+            for i in range(minimum_samples_to_take):
+                voltage = data_container[0].dq_data_structure.analog5.pop()
+
+                channel_5_voltages.append(voltage)
+
+                channel[i] = voltage
+
+        elif len(data_container[0].dq_data_structure.analog6) > minimum_samples_to_take:
+
+            for i in range(minimum_samples_to_take):
+                voltage = data_container[0].dq_data_structure.analog6.pop()
+
+                channel_6_voltages.append(voltage)
+
+                channel[i] = voltage
+
+        elif len(data_container[0].dq_data_structure.analog7) > minimum_samples_to_take:
+
+            for i in range(minimum_samples_to_take):
+                voltage = data_container[0].dq_data_structure.analog7.pop()
+
+                channel_7_voltages.append(voltage)
+
+                channel[i] = voltage
+
+        elif len(data_container[0].dq_data_structure.analog8) > minimum_samples_to_take:
+
+            for i in range(minimum_samples_to_take):
+                voltage = data_container[0].dq_data_structure.analog8.pop()
+
+                channel_8_voltages.append(voltage)
+
+                channel[i] = voltage
+
+    # voltage_data_source_manager()
+
+
+def voltage_data_source_manager_runnable(voltage_channel_data: np.ndarray, sink_handler):
+    name = "voltage_data_source_manager_runnable"
+
+    while True:
+
+        if voltage_data_source_manager_thread_enable is False:
+            print("exiting " + name)
+            break
+
+        # copy over enough points to fill the frame, discard the rest for now since they won't be shown.
+        # long term, maybe they will get logged somewhere?
+
+        # check if empty
+        ch_1_value = "\tNo Data"
+        ch_2_value = "\tNo Data"
+        ch_3_value = "\tNo Data"
+        ch_4_value = "\tNo Data"
+        ch_5_value = "\tNo Data"
+        ch_6_value = "\tNo Data"
+        ch_7_value = "\tNo Data"
+        ch_8_value = "\tNo Data"
+
+        if len(channel_1_voltages) > 0:
+            ch_1_value = "{:10.2f}".format(channel_1_voltages.pop())
+
+        if len(channel_2_voltages) > 0:
+            ch_2_value = "{:10.2f}".format(channel_2_voltages.pop())
+
+        if len(channel_3_voltages) > 0:
+            ch_3_value = "{:10.2f}".format(channel_3_voltages.pop())
+
+        if len(channel_4_voltages) > 0:
+            ch_4_value = "{:10.2f}".format(channel_4_voltages.pop())
+
+        if len(channel_5_voltages) > 0:
+            ch_5_value = "{:10.2f}".format(channel_5_voltages.pop())
+
+        if len(channel_6_voltages) > 0:
+            ch_6_value = "{:10.2f}".format(channel_6_voltages.pop())
+
+        if len(channel_7_voltages) > 0:
+            ch_7_value = "{:10.2f}".format(channel_7_voltages.pop())
+
+        if len(channel_8_voltages) > 0:
+            ch_8_value = "{:10.2f}".format(channel_8_voltages.pop())
+
         print("Voltages "
-              + "ch 1: " + "{:10.2f}".format(channel_1_voltages.pop())
-              + " ch 2: " + "{:10.2f}".format(channel_2_voltages.pop())
-              + " ch 3: " + "{:10.2f}".format(channel_3_voltages.pop())
-              + " ch 4: " + "{:10.2f}".format(channel_4_voltages.pop())
-              + " ch 5: " + "{:10.2f}".format(channel_5_voltages.pop())
-              + " ch 6: " + "{:10.2f}".format(channel_6_voltages.pop())
-              + " ch 7: " + "{:10.2f}".format(channel_7_voltages.pop())
-              + " ch 8: " + "{:10.2f}".format(channel_8_voltages.pop())
+              + "ch 1: " + ch_1_value
+              + " \tch 2: " + ch_2_value
+              + " \tch 3: " + ch_3_value
+              + " \tch 4: " + ch_4_value
+              + " \tch 5: " + ch_5_value
+              + " \tch 6: " + ch_6_value
+              + " \tch 7: " + ch_7_value
+              + " \tch 8: " + ch_8_value
               )
+
         #"""
+        print(channel_data[0])
+        print(channel_data[1])
+        print(channel_data[2])
+        print(channel_data[3])
+
+        print(channel_data[4])
+        print(channel_data[5])
+        print(channel_data[6])
+        print(channel_data[7])
+        #"""
+
+        sink_handler()
+
+        time.sleep(1.0)
 
 
 # Debug level and console print statements will influence scripts ability to handle large amounts of data
 # https://www.loggly.com/ultimate-guide/python-logging-basics/
 logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
+
+voltage_data_source_manager_thread_enable = True
+channel_data = None
+
+
+def sink_handler_dummy_method():
+    print("sinkd_handler_dummy_method called")
 
 
 def main():
@@ -1188,7 +1291,7 @@ def main():
     # define channel config - channel 1 must be configured and first in the list even if ch 1 is not used
     scan_list_configuration = {
         DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch1: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0,
-        DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch3: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_5V0,
+        DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch3: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0,
         DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch4: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0,
         DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch2: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0,
 
@@ -1197,6 +1300,15 @@ def main():
         DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch7: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0,
         DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch8: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0
     }
+
+    # setup size of channel_data object
+    global channel_data
+    channel_data = np.zeros(shape=(len(scan_list_configuration), 10), dtype=float)
+
+    # setup the thread that will pass data onto the sink
+    global voltage_data_source_manager_thread_enable
+    voltage_data_source_manager_thread = threading.Thread(target=voltage_data_source_manager_runnable,
+                                                          args=(channel_data, sink_handler_dummy_method))
 
     dataq_comms = DataqCommsManager(dq_ports, logger_ip, client_ip)
 
@@ -1218,10 +1330,13 @@ def main():
         device_group_order=0
     )
 
-    dataq_comms.configure_and_connect_device(dataq_config, data_consumption_handler)
+    dataq_comms.configure_and_connect_device(dataq_config, dataq_data_handler)
 
     # set device time
     # TBD
+
+    # start a demo thread to print out the voltages
+    voltage_data_source_manager_thread.start()
 
     # sync start/start acquisition
     dataq_comms.start_acquisition()
@@ -1233,6 +1348,9 @@ def main():
 
     # disconnect
     dataq_comms.disconnect_device()
+
+    # stop thread that is printing out voltages
+    voltage_data_source_manager_thread_enable = False
 
 
 if __name__ == "__main__":
