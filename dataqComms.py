@@ -906,8 +906,11 @@ class DataqCommsManager:
                     responding_device_order].dq_data_structure.cumulative_missing_samples_this_device
 
                 if missing_sample_count_this_device % self.set_sample_rate_hz == 0:
-                    percent_loss = int((1 - (
-                                cumulative_sample_count_from_device - missing_sample_count_this_device) / cumulative_sample_count_from_device) * 100)
+                    if cumulative_sample_count_from_device > 0:
+                        percent_loss = int((1 - (
+                                    cumulative_sample_count_from_device - missing_sample_count_this_device) / cumulative_sample_count_from_device) * 100)
+                    else:
+                        percent_loss = 0.0
                     print(
                         "Missing Samples! Loss: " + str(percent_loss) + "%"
                         + " Sent: " + str(cumulative_sample_count_from_device)
@@ -1029,14 +1032,19 @@ class DataqCommsManager:
                 if current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch1:
                     self.dataq_group_container[responding_device_order].dq_data_structure.analog1.append(
                         calculated_voltage)
+                    # print("ch1: " + str(calculated_voltage))
 
                 elif current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch2:
                     self.dataq_group_container[responding_device_order].dq_data_structure.analog2.append(
                         calculated_voltage)
 
+                    # print("ch2: " + str(calculated_voltage))
+
                 elif current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch3:
                     self.dataq_group_container[responding_device_order].dq_data_structure.analog3.append(
                         calculated_voltage)
+
+                    # print("ch3: " + str(calculated_voltage))
 
                 elif current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch4:
                     self.dataq_group_container[responding_device_order].dq_data_structure.analog4.append(
@@ -1270,6 +1278,7 @@ def voltage_data_source_manager_runnable(voltage_channel_data: np.ndarray, sink_
         if call_hanlder:
             sink_handler(voltage_channel_data)
 
+            """
             print("\nch1: ", end=" ")
             for v in voltage_channel_data[0]:
                 print("{:10.2f}".format(v), end=" ")
@@ -1277,11 +1286,11 @@ def voltage_data_source_manager_runnable(voltage_channel_data: np.ndarray, sink_
             print("\nch2: ", end=" ")
             for v in voltage_channel_data[1]:
                 print("{:10.2f}".format(v), end=" ")
-
-            print("\nch3: ", end=" ")
+            
+            print("\nch3: ", end=" ")            
             for v in voltage_channel_data[2]:
                 print("{:10.2f}".format(v), end=" ")
-
+            
             print("\nch4: ", end=" ")
             for v in voltage_channel_data[3]:
                 print("{:10.2f}".format(v), end=" ")
@@ -1301,9 +1310,9 @@ def voltage_data_source_manager_runnable(voltage_channel_data: np.ndarray, sink_
             print("\nch8: ", end=" ")
             for v in voltage_channel_data[7]:
                 print("{:10.2f}".format(v), end=" ")
+            
             print("\n")
-
-        # time.sleep(1.0)
+            """
 
 
 # Debug level and console print statements will influence scripts ability to handle large amounts of data
@@ -1339,22 +1348,24 @@ def main():
     my_group_key_id = int("0x06681444", 0)
 
     # define channel config - channel 1 must be configured and first in the list even if ch 1 is not used
-    voltage_scale = DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_5V0
+    voltage_scale = DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_0V5
+    # from protocol doc: • slist positions must be defined sequentially beginning with position 0
+    # DO NOT skip channels or mix the order as this will completely screw up the measurement capture.
     scan_list_configuration = {
-        DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch1: voltage_scale,
-        DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch2: voltage_scale,
-        DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch3: voltage_scale,
-        DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch4: voltage_scale,
+        DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch1: voltage_scale
+        , DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch2: voltage_scale
+        , DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch3: voltage_scale
+        # , DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch4: voltage_scale
 
-        DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch5: voltage_scale,
-        DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch6: voltage_scale,
-        DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch7: voltage_scale,
-        DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch8: voltage_scale
+        # , DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch5: voltage_scale
+        # , DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch6: voltage_scale
+        # , DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch7: voltage_scale
+        # , DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch8: voltage_scale
     }
 
     # buffer should be sized so that 1 periods worth of data is drawn once a second
-    per_channel_data_buffer_size = 10
-    voltage_positive_reference = 5.5
+    per_channel_data_buffer_size = 1000
+    voltage_positive_reference = 0.250
     voltage_negative_reference = -1 * voltage_positive_reference
 
     # setup size of channel_data object
@@ -1371,7 +1382,7 @@ def main():
 
     dataq_comms = DataqCommsManager(dq_ports, logger_ip, client_ip)
 
-    dataq_comms.set_sample_rate(DQEnums.SampleRate.SAMPLE_10HZ)
+    dataq_comms.set_sample_rate(DQEnums.SampleRate.SAMPLE_1000HZ)
 
     if dataq_comms.initialize_socket():
         print("socket initialized")
@@ -1400,7 +1411,7 @@ def main():
     # sync start/start acquisition
     dataq_comms.start_acquisition()
 
-    # matplot_sink.show_graph()
+    matplot_sink.show_graph()
 
     input("Press enter to stop...")
 
