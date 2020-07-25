@@ -63,7 +63,9 @@ class MatplotSink:
 
         while True:
 
-            yield self.channel_data
+            local_channel_data = self.channel_data.copy()
+
+            yield local_channel_data
 
     def show_graph(self):
         ani = animation.FuncAnimation(self.fig, self.update_graph, self.data_transfer, interval=self.plot_update_interval_ms)
