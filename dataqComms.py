@@ -8,6 +8,10 @@ import threading
 import time
 import numpy as np
 
+from matplotSink import MatplotSink
+
+import cProfile
+
 """
 https://www.dataq.com/products/di-4108-e/
 """
@@ -657,7 +661,9 @@ class DataqCommsManager:
             try:
                 response = self.udp_response_socket.recv(1024)
                 self.process_response(response)
+                # start_time = time.time()
                 self.receive_data_handler(self.dataq_group_container)
+                # print("--- %s seconds ---" % (time.time() - start_time))
             except socket.error as e:
                 self.log.exception(name + ": ")
                 self.log.warning(name + ": Code to handle exception needed!")
@@ -900,8 +906,11 @@ class DataqCommsManager:
                     responding_device_order].dq_data_structure.cumulative_missing_samples_this_device
 
                 if missing_sample_count_this_device % self.set_sample_rate_hz == 0:
-                    percent_loss = int((1 - (
-                                cumulative_sample_count_from_device - missing_sample_count_this_device) / cumulative_sample_count_from_device) * 100)
+                    if cumulative_sample_count_from_device > 0:
+                        percent_loss = int((1 - (
+                                    cumulative_sample_count_from_device - missing_sample_count_this_device) / cumulative_sample_count_from_device) * 100)
+                    else:
+                        percent_loss = 0.0
                     print(
                         "Missing Samples! Loss: " + str(percent_loss) + "%"
                         + " Sent: " + str(cumulative_sample_count_from_device)
@@ -1023,14 +1032,19 @@ class DataqCommsManager:
                 if current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch1:
                     self.dataq_group_container[responding_device_order].dq_data_structure.analog1.append(
                         calculated_voltage)
+                    # print("ch1: " + str(calculated_voltage))
 
                 elif current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch2:
                     self.dataq_group_container[responding_device_order].dq_data_structure.analog2.append(
                         calculated_voltage)
 
+                    # print("ch2: " + str(calculated_voltage))
+
                 elif current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch3:
                     self.dataq_group_container[responding_device_order].dq_data_structure.analog3.append(
                         calculated_voltage)
+
+                    # print("ch3: " + str(calculated_voltage))
 
                 elif current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch4:
                     self.dataq_group_container[responding_device_order].dq_data_structure.analog4.append(
@@ -1087,15 +1101,20 @@ class DataqCommsManager:
             return 0
 
 
-channel_1_voltages = []
-channel_2_voltages = []
-channel_3_voltages = []
-channel_4_voltages = []
+# fastest, cleanest way to do this
+@dataclass()
+class AnalogVoltages:
+    channel = [
+        [],
+        [],
+        [],
+        [],
 
-channel_5_voltages = []
-channel_6_voltages = []
-channel_7_voltages = []
-channel_8_voltages = []
+        [],
+        [],
+        [],
+        []
+    ]
 
 
 # make a quick copy of the data
@@ -1103,83 +1122,83 @@ def dataq_data_handler(data_container: DQDataContainer):
     name = "consume_data"
     # self.log.info(name)
 
+    for i in range(len(data_container[0].dq_data_structure.analog1)):
+        voltage = data_container[0].dq_data_structure.analog1.pop()
+        analog_voltages.channel[0].append(voltage)
+
+    for i in range(len(data_container[0].dq_data_structure.analog2)):
+        voltage = data_container[0].dq_data_structure.analog2.pop()
+        analog_voltages.channel[1].append(voltage)
+
+    for i in range(len(data_container[0].dq_data_structure.analog3)):
+        voltage = data_container[0].dq_data_structure.analog3.pop()
+        analog_voltages.channel[2].append(voltage)
+
+    for i in range(len(data_container[0].dq_data_structure.analog4)):
+        voltage = data_container[0].dq_data_structure.analog4.pop()
+        analog_voltages.channel[3].append(voltage)
+
+    for i in range(len(data_container[0].dq_data_structure.analog5)):
+        voltage = data_container[0].dq_data_structure.analog5.pop()
+        analog_voltages.channel[4].append(voltage)
+
+    for i in range(len(data_container[0].dq_data_structure.analog6)):
+        voltage = data_container[0].dq_data_structure.analog6.pop()
+        analog_voltages.channel[5].append(voltage)
+
+    for i in range(len(data_container[0].dq_data_structure.analog7)):
+        voltage = data_container[0].dq_data_structure.analog7.pop()
+        analog_voltages.channel[6].append(voltage)
+
+    for i in range(len(data_container[0].dq_data_structure.analog8)):
+        voltage = data_container[0].dq_data_structure.analog8.pop()
+        analog_voltages.channel[7].append(voltage)
+
+    """
     # start with first channel and fill with the first available data set
-    for channel in channel_data:
+    # for channel in channel_data:
+    minimum_samples_to_take = len(channel_data[0])
 
-        minimum_samples_to_take = len(channel)
-
-        if len(data_container[0].dq_data_structure.analog1) > minimum_samples_to_take:
-            for i in range(minimum_samples_to_take):
+    if len(data_container[0].dq_data_structure.analog1) > minimum_samples_to_take:
+        for i in range(minimum_samples_to_take):
                 voltage = data_container[0].dq_data_structure.analog1.pop()
+                channel_data[0][i] = voltage
+                
+    if len(data_container[0].dq_data_structure.analog2) > minimum_samples_to_take:
+        for i in range(minimum_samples_to_take):
+            voltage = data_container[0].dq_data_structure.analog2.pop()
+            channel_data[1][i] = voltage
 
-                channel_1_voltages.append(voltage)
+    if len(data_container[0].dq_data_structure.analog3) > minimum_samples_to_take:
+        for i in range(minimum_samples_to_take):
+            voltage = data_container[0].dq_data_structure.analog3.pop()
+            channel_data[2][i] = voltage
 
-                channel[i] = voltage
+    if len(data_container[0].dq_data_structure.analog4) > minimum_samples_to_take:
+        for i in range(minimum_samples_to_take):
+            voltage = data_container[0].dq_data_structure.analog4.pop()
+            channel_data[3][i] = voltage
 
-        elif len(data_container[0].dq_data_structure.analog2) > minimum_samples_to_take:
+    if len(data_container[0].dq_data_structure.analog5) > minimum_samples_to_take:
+        for i in range(minimum_samples_to_take):
+            voltage = data_container[0].dq_data_structure.analog5.pop()
+            channel_data[4][i] = voltage
 
-            for i in range(minimum_samples_to_take):
-                voltage = data_container[0].dq_data_structure.analog2.pop()
+    if len(data_container[0].dq_data_structure.analog6) > minimum_samples_to_take:
+        for i in range(minimum_samples_to_take):
+            voltage = data_container[0].dq_data_structure.analog6.pop()
+            channel_data[5][i] = voltage
 
-                channel_2_voltages.append(voltage)
+    if len(data_container[0].dq_data_structure.analog7) > minimum_samples_to_take:
+        for i in range(minimum_samples_to_take):
+            voltage = data_container[0].dq_data_structure.analog7.pop()
+            channel_data[6][i] = voltage
 
-                channel[i] = voltage
-
-        elif len(data_container[0].dq_data_structure.analog3) > minimum_samples_to_take:
-
-            for i in range(minimum_samples_to_take):
-                voltage = data_container[0].dq_data_structure.analog3.pop()
-
-                channel_3_voltages.append(voltage)
-
-                channel[i] = voltage
-
-        elif len(data_container[0].dq_data_structure.analog4) > minimum_samples_to_take:
-
-            for i in range(minimum_samples_to_take):
-                voltage = data_container[0].dq_data_structure.analog4.pop()
-
-                channel_4_voltages.append(voltage)
-
-                channel[i] = voltage
-
-        elif len(data_container[0].dq_data_structure.analog5) > minimum_samples_to_take:
-
-            for i in range(minimum_samples_to_take):
-                voltage = data_container[0].dq_data_structure.analog5.pop()
-
-                channel_5_voltages.append(voltage)
-
-                channel[i] = voltage
-
-        elif len(data_container[0].dq_data_structure.analog6) > minimum_samples_to_take:
-
-            for i in range(minimum_samples_to_take):
-                voltage = data_container[0].dq_data_structure.analog6.pop()
-
-                channel_6_voltages.append(voltage)
-
-                channel[i] = voltage
-
-        elif len(data_container[0].dq_data_structure.analog7) > minimum_samples_to_take:
-
-            for i in range(minimum_samples_to_take):
-                voltage = data_container[0].dq_data_structure.analog7.pop()
-
-                channel_7_voltages.append(voltage)
-
-                channel[i] = voltage
-
-        elif len(data_container[0].dq_data_structure.analog8) > minimum_samples_to_take:
-
-            for i in range(minimum_samples_to_take):
-                voltage = data_container[0].dq_data_structure.analog8.pop()
-
-                channel_8_voltages.append(voltage)
-
-                channel[i] = voltage
-
-    # voltage_data_source_manager()
+    if len(data_container[0].dq_data_structure.analog8) > minimum_samples_to_take:
+        for i in range(minimum_samples_to_take):
+            voltage = data_container[0].dq_data_structure.analog8.pop()
+            channel_data[7][i] = voltage
+    """
 
 
 def voltage_data_source_manager_runnable(voltage_channel_data: np.ndarray, sink_handler):
@@ -1191,9 +1210,7 @@ def voltage_data_source_manager_runnable(voltage_channel_data: np.ndarray, sink_
             print("exiting " + name)
             break
 
-        # copy over enough points to fill the frame, discard the rest for now since they won't be shown.
-        # long term, maybe they will get logged somewhere?
-
+        """        
         # check if empty
         ch_1_value = "\tNo Data"
         ch_2_value = "\tNo Data"
@@ -1238,22 +1255,64 @@ def voltage_data_source_manager_runnable(voltage_channel_data: np.ndarray, sink_
               + " \tch 7: " + ch_7_value
               + " \tch 8: " + ch_8_value
               )
+        """
 
-        #"""
-        print(channel_data[0])
-        print(channel_data[1])
-        print(channel_data[2])
-        print(channel_data[3])
+        # extract analog voltages, store into ndarray
+        ndarray_index = 0
 
-        print(channel_data[4])
-        print(channel_data[5])
-        print(channel_data[6])
-        print(channel_data[7])
-        #"""
+        call_hanlder = False
 
-        sink_handler()
+        global analog_voltages
+        # for i, channel in enumerate(analog_voltages.channel):
+        for channel in analog_voltages.channel:
 
-        time.sleep(1.0)
+            if len(channel) > voltage_channel_data.shape[1]:
+                for i in range(voltage_channel_data.shape[1]):
+                    voltage_channel_data[ndarray_index][i] = channel.pop()
+
+                ndarray_index += 1
+
+            if ndarray_index >= voltage_channel_data.shape[0]:
+                call_hanlder = True
+
+        if call_hanlder:
+            sink_handler(voltage_channel_data)
+
+            """
+            print("\nch1: ", end=" ")
+            for v in voltage_channel_data[0]:
+                print("{:10.2f}".format(v), end=" ")
+
+            print("\nch2: ", end=" ")
+            for v in voltage_channel_data[1]:
+                print("{:10.2f}".format(v), end=" ")
+            
+            print("\nch3: ", end=" ")            
+            for v in voltage_channel_data[2]:
+                print("{:10.2f}".format(v), end=" ")
+            
+            print("\nch4: ", end=" ")
+            for v in voltage_channel_data[3]:
+                print("{:10.2f}".format(v), end=" ")
+
+            print("\nch5: ", end=" ")
+            for v in voltage_channel_data[4]:
+                print("{:10.2f}".format(v), end=" ")
+
+            print("\nch6: ", end=" ")
+            for v in voltage_channel_data[5]:
+                print("{:10.2f}".format(v), end=" ")
+
+            print("\nch7: ", end=" ")
+            for v in voltage_channel_data[6]:
+                print("{:10.2f}".format(v), end=" ")
+
+            print("\nch8: ", end=" ")
+            for v in voltage_channel_data[7]:
+                print("{:10.2f}".format(v), end=" ")
+            
+            print("\n")
+            """
 
 
 # Debug level and console print statements will influence scripts ability to handle large amounts of data
@@ -1261,15 +1320,15 @@ def voltage_data_source_manager_runnable(voltage_channel_data: np.ndarray, sink_
 logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
 
 voltage_data_source_manager_thread_enable = True
-channel_data = None
-
-
-def sink_handler_dummy_method():
-    print("sinkd_handler_dummy_method called")
+# channel_data = None
+analog_voltages = None
 
 
 def main():
     print("Entering main")
+
+    global analog_voltages
+    analog_voltages = AnalogVoltages()
 
     # debug plot code
 
@@ -1289,30 +1348,41 @@ def main():
     my_group_key_id = int("0x06681444", 0)
 
     # define channel config - channel 1 must be configured and first in the list even if ch 1 is not used
+    voltage_scale = DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_0V5
+    # from protocol doc: • slist positions must be defined sequentially beginning with position 0
+    # DO NOT skip channels or mix the order as this will completely screw up the measurement capture.
     scan_list_configuration = {
-        DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch1: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0,
-        DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch3: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0,
-        DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch4: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0,
-        DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch2: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0,
+        DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch1: voltage_scale
+        , DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch2: voltage_scale
+        , DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch3: voltage_scale
+        # , DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch4: voltage_scale
 
-        DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch5: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0,
-        DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch6: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0,
-        DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch7: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0,
-        DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch8: DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_10V0
+        # , DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch5: voltage_scale
+        # , DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch6: voltage_scale
+        # , DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch7: voltage_scale
+        # , DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch8: voltage_scale
     }
 
+    # buffer should be sized so that 1 periods worth of data is drawn once a second
+    per_channel_data_buffer_size = 1000
+    voltage_positive_reference = 0.250
+    voltage_negative_reference = -1 * voltage_positive_reference
+
     # setup size of channel_data object
-    global channel_data
-    channel_data = np.zeros(shape=(len(scan_list_configuration), 10), dtype=float)
+    # global channel_data
+    channel_data = np.zeros(shape=(len(scan_list_configuration), per_channel_data_buffer_size), dtype=float)
+
+    # setup the matplot sink
+    matplot_sink = MatplotSink(len(scan_list_configuration), per_channel_data_buffer_size, voltage_negative_reference, voltage_positive_reference, 10)
 
     # setup the thread that will pass data onto the sink
     global voltage_data_source_manager_thread_enable
     voltage_data_source_manager_thread = threading.Thread(target=voltage_data_source_manager_runnable,
-                                                          args=(channel_data, sink_handler_dummy_method))
+                                                          args=(channel_data, matplot_sink.voltage_data_sink_handler))
 
     dataq_comms = DataqCommsManager(dq_ports, logger_ip, client_ip)
 
-    dataq_comms.set_sample_rate(DQEnums.SampleRate.SAMPLE_10HZ)
+    dataq_comms.set_sample_rate(DQEnums.SampleRate.SAMPLE_1000HZ)
 
     if dataq_comms.initialize_socket():
         print("socket initialized")
@@ -1341,6 +1411,8 @@ def main():
     # sync start/start acquisition
     dataq_comms.start_acquisition()
 
+    matplot_sink.show_graph()
+
     input("Press enter to stop...")
 
     # stop
@@ -1354,4 +1426,5 @@ def main():
 
 
 if __name__ == "__main__":
+    # cProfile.run('main()')
     main()
