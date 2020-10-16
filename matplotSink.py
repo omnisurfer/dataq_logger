@@ -17,7 +17,7 @@ class MatplotSink:
     def __init__(self, number_of_channels_to_plot, number_of_points_to_plot_per_channel, voltage_scale_n, voltage_scale_p, update_rate_ms):
         self.number_of_plots = number_of_channels_to_plot
 
-        self.fig, self.ax = plt.subplots(self.number_of_plots, 1)
+        self.fig, self.ax = plt.subplots(self.number_of_plots, 1, figsize=(10, 5))
         self.lines = []
 
         self.number_of_points_to_plot = number_of_points_to_plot_per_channel
@@ -72,6 +72,9 @@ class MatplotSink:
         # execution freezes here
         plt.show()
 
+    def close_graph(self):
+        plt.close()
+
     def get_number_of_channels_plots(self):
         return self.number_of_plots
 
@@ -86,7 +89,10 @@ class MatplotSink:
         # print(name)
 
         # Have to do a deep copy so that this doesn't block
+        # start_time = time.time()
         self.channel_data = voltage_channel_data.copy()
+        # print("--- %s seconds ---" % (time.time() - start_time))
+
         """
         print(voltage_channel_data[0])
         print(voltage_channel_data[1])

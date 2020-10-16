@@ -272,13 +272,15 @@ class DataqCommsManager:
     def __init__(self, dq_ports, logger_ip, client_ip):
         self.log = logging.getLogger("DataqCommsManager")
 
+        self.recv_buffer_size = 1024 * 1024 * 1  # ~X MBs
+
         self.dq_ports = dq_ports
         self.logger_ip = logger_ip
         self.client_ip = client_ip
 
         # drowan_NOTES_20200618: Only one device used so setting to 1
         self.sync_device_count = 1
-        self.receive_timeout_sec = 2
+        self.receive_timeout_sec = 5
 
         self.keep_alive_thread_enable = False
         self.keep_alive_thread = None
@@ -373,6 +375,9 @@ class DataqCommsManager:
         self.udp_response_socket = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
         self.udp_response_socket.settimeout(self.receive_timeout_sec)
         self.client_inbound_address_and_port = ("0.0.0.0", self.dq_ports.logger_discovery_remote_port)
+
+    def set_receive_buffer_size(self, size_in_bytes):
+        self.recv_buffer_size = size_in_bytes
 
     def initialize_socket(self):
         name = "initialize_socket"
@@ -534,11 +539,15 @@ class DataqCommsManager:
             self.log.error(name + " command error")
 
         # drowan_TODO_20200624: find a way to pause the thread?
-        self.receive_data_thread_event.clear()
+        # self.receive_data_thread_event.clear()
 
     def disconnect_device(self):
         name = "disconnect_device"
         self.log.info(name)
+
+        self.keep_alive_thread_enable = False
+        self.keep_alive_thread_event.set()
+        self.keep_alive_thread.join()
 
         # send disconnect command
         dq_command = DQCommandResponseStructures.DQCommand(
@@ -555,10 +564,6 @@ class DataqCommsManager:
 
         if not command_ok:
             self.log.error(name + " command error")
-
-        self.keep_alive_thread_enable = False
-        self.keep_alive_thread_event.set()
-        self.keep_alive_thread.join()
 
         self.receive_data_thread_enable = False
         self.receive_data_thread_event.set()
@@ -589,14 +594,12 @@ class DataqCommsManager:
 
         self.udp_command_socket.sendto(command_string, self.dataq_server_address_and_port)
 
-        buffer_size = 1024
-
         # this is for commands that don't echo
         if ignore_timeout is True:
             return 1
         else:
             try:
-                response_from_logger = self.udp_response_socket.recv(buffer_size)
+                response_from_logger = self.udp_response_socket.recv(self.recv_buffer_size)
                 response_ok = self.process_response(response_from_logger)
 
                 if not response_ok:
@@ -650,6 +653,8 @@ class DataqCommsManager:
 
         while True:
 
+            # start_time = time.time()
+
             if self.receive_data_thread_enable is False:
                 self.log.info(name + ": told to exit thread")
                 break
@@ -659,7 +664,7 @@ class DataqCommsManager:
                 self.log.info(name + ": got receive event")
 
             try:
-                response = self.udp_response_socket.recv(1024)
+                response = self.udp_response_socket.recv(self.recv_buffer_size)
                 self.process_response(response)
                 # start_time = time.time()
                 self.receive_data_handler(self.dataq_group_container)
@@ -667,6 +672,8 @@ class DataqCommsManager:
             except socket.error as e:
                 self.log.exception(name + ": ")
                 self.log.warning(name + ": Code to handle exception needed!")
+
+            # print("--- %s seconds ---" % (time.time() - start_time))
 
         self.log.info(name + ": exiting...")
 
@@ -1122,6 +1129,7 @@ def dataq_data_handler(data_container: DQDataContainer):
     name = "consume_data"
     # self.log.info(name)
 
+    # start_time = time.time()
     for i in range(len(data_container[0].dq_data_structure.analog1)):
         voltage = data_container[0].dq_data_structure.analog1.pop()
         analog_voltages.channel[0].append(voltage)
@@ -1154,6 +1162,7 @@ def dataq_data_handler(data_container: DQDataContainer):
         voltage = data_container[0].dq_data_structure.analog8.pop()
         analog_voltages.channel[7].append(voltage)
 
+    # print("--- %s seconds ---" % (time.time() - start_time))
     """
     # start with first channel and fill with the first available data set
     # for channel in channel_data:
@@ -1205,57 +1214,11 @@ def voltage_data_source_manager_runnable(voltage_channel_data: np.ndarray, sink_
     name = "voltage_data_source_manager_runnable"
 
     while True:
+        # start_time = time.time()
 
         if voltage_data_source_manager_thread_enable is False:
             print("exiting " + name)
             break
-
-        """        
-        # check if empty
-        ch_1_value = "\tNo Data"
-        ch_2_value = "\tNo Data"
-        ch_3_value = "\tNo Data"
-        ch_4_value = "\tNo Data"
-        ch_5_value = "\tNo Data"
-        ch_6_value = "\tNo Data"
-        ch_7_value = "\tNo Data"
-        ch_8_value = "\tNo Data"
-
-        if len(channel_1_voltages) > 0:
-            ch_1_value = "{:10.2f}".format(channel_1_voltages.pop())
-
-        if len(channel_2_voltages) > 0:
-            ch_2_value = "{:10.2f}".format(channel_2_voltages.pop())
-
-        if len(channel_3_voltages) > 0:
-            ch_3_value = "{:10.2f}".format(channel_3_voltages.pop())
-
-        if len(channel_4_voltages) > 0:
-            ch_4_value = "{:10.2f}".format(channel_4_voltages.pop())
-
-        if len(channel_5_voltages) > 0:
-            ch_5_value = "{:10.2f}".format(channel_5_voltages.pop())
-
-        if len(channel_6_voltages) > 0:
-            ch_6_value = "{:10.2f}".format(channel_6_voltages.pop())
-
-        if len(channel_7_voltages) > 0:
-            ch_7_value = "{:10.2f}".format(channel_7_voltages.pop())
-
-        if len(channel_8_voltages) > 0:
-            ch_8_value = "{:10.2f}".format(channel_8_voltages.pop())
-
-        print("Voltages "
-              + "ch 1: " + ch_1_value
-              + " \tch 2: " + ch_2_value
-              + " \tch 3: " + ch_3_value
-              + " \tch 4: " + ch_4_value
-              + " \tch 5: " + ch_5_value
-              + " \tch 6: " + ch_6_value
-              + " \tch 7: " + ch_7_value
-              + " \tch 8: " + ch_8_value
-              )
-        """
 
         # extract analog voltages, store into ndarray
         ndarray_index = 0
@@ -1263,6 +1226,7 @@ def voltage_data_source_manager_runnable(voltage_channel_data: np.ndarray, sink_
         call_hanlder = False
 
         global analog_voltages
+        # start_time = time.time()
         # for i, channel in enumerate(analog_voltages.channel):
         for channel in analog_voltages.channel:
 
@@ -1310,9 +1274,10 @@ def voltage_data_source_manager_runnable(voltage_channel_data: np.ndarray, sink_
             print("\nch8: ", end=" ")
             for v in voltage_channel_data[7]:
                 print("{:10.2f}".format(v), end=" ")
-            
             print("\n")
             """
+
+        # print("--- %s seconds ---" % (time.time() - start_time))
 
 
 # Debug level and console print statements will influence scripts ability to handle large amounts of data
@@ -1322,6 +1287,13 @@ logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
 voltage_data_source_manager_thread_enable = True
 # channel_data = None
 analog_voltages = None
+
+
+def dummy_handler(voltage_channel_data: np.ndarray):
+    name = "dummy_handler"
+
+
+global start_time
 
 
 def main():
@@ -1342,8 +1314,8 @@ def main():
         logger_command_data_client_port=1427
     )
 
-    logger_ip = "192.168.1.209"
-    client_ip = "192.168.1.3"
+    logger_ip = "192.168.9.2"
+    client_ip = "192.168.9.4"
 
     my_group_key_id = int("0x06681444", 0)
 
@@ -1355,17 +1327,18 @@ def main():
         DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch1: voltage_scale
         , DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch2: voltage_scale
         , DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch3: voltage_scale
-        # , DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch4: voltage_scale
+        , DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch4: voltage_scale
 
-        # , DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch5: voltage_scale
-        # , DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch6: voltage_scale
-        # , DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch7: voltage_scale
-        # , DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch8: voltage_scale
+        , DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch5: voltage_scale
+        , DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch6: voltage_scale
+        , DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch7: voltage_scale
+        , DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch8: voltage_scale
     }
 
-    # buffer should be sized so that 1 periods worth of data is drawn once a second
-    per_channel_data_buffer_size = 1000
-    voltage_positive_reference = 0.250
+    # buffer should be sized so that one periods worth of data is rendered once a second
+    sample_rate = DQEnums.SampleRate.SAMPLE_100HZ
+    per_channel_data_buffer_size = sample_rate
+    voltage_positive_reference = 0.5
     voltage_negative_reference = -1 * voltage_positive_reference
 
     # setup size of channel_data object
@@ -1373,7 +1346,7 @@ def main():
     channel_data = np.zeros(shape=(len(scan_list_configuration), per_channel_data_buffer_size), dtype=float)
 
     # setup the matplot sink
-    matplot_sink = MatplotSink(len(scan_list_configuration), per_channel_data_buffer_size, voltage_negative_reference, voltage_positive_reference, 10)
+    matplot_sink = MatplotSink(len(scan_list_configuration), per_channel_data_buffer_size, voltage_negative_reference, voltage_positive_reference, 1)
 
     # setup the thread that will pass data onto the sink
     global voltage_data_source_manager_thread_enable
@@ -1382,7 +1355,10 @@ def main():
 
     dataq_comms = DataqCommsManager(dq_ports, logger_ip, client_ip)
 
-    dataq_comms.set_sample_rate(DQEnums.SampleRate.SAMPLE_1000HZ)
+    dataq_comms.set_sample_rate(sample_rate)
+    dataq_comms.set_receive_buffer_size(sample_rate * 2 * 2 * len(scan_list_configuration))
+
+    print(dataq_comms.recv_buffer_size)
 
     if dataq_comms.initialize_socket():
         print("socket initialized")
@@ -1393,7 +1369,7 @@ def main():
     # create configuration
     dataq_config = DQDeviceConfiguration(
         encode=DQEnums.Encoding.BINARY_DEFAULT,
-        ps=DQEnums.PacketSize.PS_16_BYTES_DEFAULT,
+        ps=DQEnums.PacketSize.PS_512_BYTES,
         s_list=scan_list_configuration,
         device_role=DQEnums.DeviceRole.MASTER,
         device_group_key_id=my_group_key_id,
@@ -1414,6 +1390,8 @@ def main():
     matplot_sink.show_graph()
 
     input("Press enter to stop...")
+
+    matplot_sink.close_graph()
 
     # stop
     dataq_comms.stop_acquisition()
