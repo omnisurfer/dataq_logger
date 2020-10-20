@@ -8,10 +8,6 @@ import threading
 import time
 import numpy as np
 
-from matplotSink import MatplotSink
-
-import cProfile
-
 """
 https://www.dataq.com/products/di-4108-e/
 """
@@ -545,9 +541,10 @@ class DataqCommsManager:
         name = "disconnect_device"
         self.log.info(name)
 
-        self.keep_alive_thread_enable = False
-        self.keep_alive_thread_event.set()
-        self.keep_alive_thread.join()
+        if self.keep_alive_thread is not None:
+            self.keep_alive_thread_enable = False
+            self.keep_alive_thread_event.set()
+            self.keep_alive_thread.join()
 
         # send disconnect command
         dq_command = DQCommandResponseStructures.DQCommand(
@@ -565,9 +562,10 @@ class DataqCommsManager:
         if not command_ok:
             self.log.error(name + " command error")
 
-        self.receive_data_thread_enable = False
-        self.receive_data_thread_event.set()
-        self.receive_data_thread.join()
+        if self.receive_data_thread is not None:
+            self.receive_data_thread_enable = False
+            self.receive_data_thread_event.set()
+            self.receive_data_thread.join()
 
         self.udp_command_socket.close()
         self.udp_response_socket.close()
@@ -1291,6 +1289,7 @@ analog_voltages = None
 
 def dummy_handler(voltage_channel_data: np.ndarray):
     name = "dummy_handler"
+    print('dummy handler')
 
 
 global start_time
