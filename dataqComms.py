@@ -1,4 +1,5 @@
 import codecs
+import struct
 
 from enum import IntEnum
 import socket
@@ -581,12 +582,19 @@ class DataqCommsManager:
         # par2_byte = dq_command.par2.to_bytes(4, byteorder=self.byte_order, signed=self.is_signed)
         # par3_byte = dq_command.par3.to_bytes(4, byteorder=self.byte_order, signed=self.is_signed)
 
-        id_byte = str(dq_command.id).encode()
-        public_key_byte = str(dq_command.public_key).encode()
-        command_byte = str(dq_command.command).encode()
-        par1_byte = str(dq_command.par1).encode()
-        par2_byte = str(dq_command.par2).encode()
-        par3_byte = str(dq_command.par3).encode()
+        # id_byte = str(dq_command.id).encode()
+        # public_key_byte = str(dq_command.public_key).encode()
+        # command_byte = str(dq_command.command).encode()
+        # par1_byte = str(dq_command.par1).encode()
+        # par2_byte = str(dq_command.par2).encode()
+        # par3_byte = str(dq_command.par3).encode()
+
+        id_byte = struct.pack('i', dq_command.id)
+        public_key_byte = struct.pack('i', dq_command.public_key)
+        command_byte = struct.pack('i', dq_command.command)
+        par1_byte = struct.pack('i', dq_command.par1)
+        par2_byte = struct.pack('i', dq_command.par2)
+        par3_byte = struct.pack('i', dq_command.par3)
 
         command_string = id_byte + \
                          public_key_byte + \
