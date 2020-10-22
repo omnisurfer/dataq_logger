@@ -1342,7 +1342,7 @@ def main():
     my_group_key_id = int("0x06681444", 0)
 
     # define channel config - channel 1 must be configured and first in the list even if ch 1 is not used
-    voltage_scale = DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_0V5
+    voltage_scale = DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_5V0
     # from protocol doc: slist positions must be defined sequentially beginning with position 0
     # DO NOT skip channels or mix the order as this will completely screw up the measurement capture.
     scan_list_configuration = {
@@ -1358,7 +1358,7 @@ def main():
     }
 
     # buffer should be sized so that one periods worth of data is rendered once a second
-    sample_rate = DQEnums.SampleRate.SAMPLE_1000HZ
+    sample_rate = DQEnums.SampleRate.SAMPLE_100HZ
     per_channel_data_buffer_size = sample_rate
     voltage_positive_reference = 0.5
     voltage_negative_reference = -1 * voltage_positive_reference
