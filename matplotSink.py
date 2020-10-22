@@ -84,7 +84,7 @@ class MatplotSink:
     def get_plot_update_intervale_ms(self):
         return self.plot_update_interval_ms
 
-    def voltage_data_sink_handler(self, voltage_channel_data: np.ndarray):
+    def voltage_data_sink_handler(self, voltage_channel_data):
         name = "voltage_data_sink_handler"
         # print(name)
 

@@ -1,6 +1,6 @@
-from dataclasses import dataclass
+import codecs
+
 from enum import IntEnum
-from typing import List
 import socket
 import logging
 import sys
@@ -8,16 +8,16 @@ import threading
 import time
 import numpy as np
 
+from matplotSink import MatplotSink
+
 """
 https://www.dataq.com/products/di-4108-e/
 """
 
 
-@dataclass()
 class DQEnums:
-    @dataclass()
-    class ID(IntEnum):
-        DQCOMMAND = int("0x31415926", 0)
+    class ID:
+        DQCOMMAND = 0x31415926
         DQRESPONSE = int("0x21712818", 0)
         DQADCDATA = int("0x14142135", 0)
         DQTHUMBDATA = int("0x17320508", 0)
@@ -25,8 +25,7 @@ class DQEnums:
         DQTHUMBSTREAM = int("0x16180339", 0)
         DQWHCHDR = int("0x05772156", 0)
 
-    @dataclass()
-    class Command(IntEnum):
+    class Command:
         SYNCSTART = 1
         SYNC = 2
         ROUNDTRIPQUERY = 3
@@ -42,8 +41,7 @@ class DQEnums:
         UDPDEBUG = 20
         USBDRIVECOMMAND = 22
 
-    @dataclass()
-    class PacketSize(IntEnum):
+    class PacketSize:
         PS_16_BYTES_DEFAULT = 0
         PS_32_BYTES = 1
         PS_64_BYTES = 2
@@ -53,8 +51,7 @@ class DQEnums:
         PS_1024_BYTES = 6
         PS_2048_BYTES = 7
 
-    @dataclass()
-    class InfoRequests(IntEnum):
+    class InfoRequests:
         MFG = 0
         MODEL = 1
         FIRMWARE_REV = 2
@@ -62,18 +59,15 @@ class DQEnums:
         SERIAL_NO = 6
         SAMPLE_RATE = 9
 
-    @dataclass()
-    class DeviceRole(IntEnum):
+    class DeviceRole:
         MASTER = 0
         SLAVE = 1
         STANDALONE = 2
 
-    @dataclass()
-    class Encoding(IntEnum):
+    class Encoding:
         BINARY_DEFAULT = 0
         ASCII = 1
 
-    @dataclass()
     class SampleRate(IntEnum):
         SAMPLE_1HZ = 1
         SAMPLE_10HZ = 10
@@ -87,7 +81,6 @@ class DQEnums:
         SAMPLE_7500HZ = 7500
         SAMPLE_10KHZ = 10000
 
-    @dataclass()
     class DQ4108:
         # rate in hz: [dec, deca]
         PreCalculatedDecDecaDict = {
@@ -104,8 +97,7 @@ class DQEnums:
             10000: [1, 1]
         }
 
-        @dataclass()
-        class ScanRateLimits(IntEnum):
+        class ScanRateLimits:
             SRATE_MIN = 375
             SRATE_MAX = 65535
             DEC_MIN = 1
@@ -115,13 +107,9 @@ class DQEnums:
             DIVIDEND = 60e6
 
 
-@dataclass()
 class DQMasks:
-    @dataclass()
     class DQ4108:
-        @dataclass()
         class ScanListDefinition:
-            @dataclass()
             class AnalogScale:
                 # The last four bits represent the values defined in the table on page 44 of the
                 # Data Acquisition Communications Protocol pdf. Of the 16 bit command, these bits
@@ -134,7 +122,6 @@ class DQMasks:
                 PN_0V5 = (4 << __bit_shift)
                 PN_0V2 = (5 << __bit_shift)
 
-            @dataclass()
             class RateRangeTable:
                 __bit_shift = 8
                 rate_50KHz = 1 << __bit_shift | 9
@@ -150,7 +137,6 @@ class DQMasks:
                 rate_20Hz = 11 << __bit_shift | 9
                 rate_10Hz = 12 << __bit_shift | 9
 
-            @dataclass()
             class AnalogIn:
                 __bit_shift = 0
                 ch1 = 0 << __bit_shift
@@ -162,103 +148,111 @@ class DQMasks:
                 ch7 = 6 << __bit_shift
                 ch8 = 7 << __bit_shift
 
-            @dataclass()
             class DigitalIn:
                 __bit_shift = 0
                 ch1 = 4 << __bit_shift
 
-            @dataclass()
             class CountIn:
                 __bit_shift = 0
                 ch1 = 6 << __bit_shift
 
 
+# https://realpython.com/python-data-classes/
 # maybe one day make the class iterable?
-@dataclass()
 class DQDataStructures:
-    @dataclass()
     class DQ4108:
-        @dataclass()
         class BinaryStreamOutput:
-            analog1: List[float]
-            analog2: List[float]
-            analog3: List[float]
-            analog4: List[float]
-            analog5: List[float]
-            analog6: List[float]
-            analog7: List[float]
-            analog8: List[float]
-            digital1: List[int]
-            digital2: List[int]
+            def __init__(self, analog1, analog2, analog3, analog4, analog5, analog6, analog7, analog8,
+                         digital1, digital2,
+                        channel_packet_carryover_index,
+                        cumulative_samples_received_this_device,
+                        cumulative_missing_samples_this_device
+                         ):
 
-            # channel_carryover_index keeps track of which channel the first byte within the received packet should go
-            # to. For example, if three channels are being sampled and the packet size is 4, the first three bytes
-            # will line up but the fourth will be the start of another first channel byte. The next received packet
-            # will have its first byte start for the second channel.
-            channel_packet_carryover_index: int
-            cumulative_samples_received_this_device: int
-            cumulative_missing_samples_this_device: int
+                self.analog1 = analog1
+                self.analog2 = analog2
+                self.analog3 = analog3
+                self.analog4 = analog4
+                self.analog5 = analog5
+                self.analog6 = analog6
+                self.analog7 = analog7
+                self.analog8 = analog8
+
+                self.digital1 = digital1
+                self.digital2 = digital2
+
+                # channel_carryover_index keeps track of which channel the first byte within the received packet should go
+                # to. For example, if three channels are being sampled and the packet size is 4, the first three bytes
+                # will line up but the fourth will be the start of another first channel byte. The next received packet
+                # will have its first byte start for the second channel.
+                self.channel_packet_carryover_index = channel_packet_carryover_index
+                self.cumulative_samples_received_this_device = cumulative_samples_received_this_device
+                self.cumulative_missing_samples_this_device = cumulative_missing_samples_this_device
 
 
-@dataclass()
 class DQCommandResponseStructures:
-    @dataclass
     class DQCommand:
-        id: DQEnums.ID  # aka Type
-        public_key: int  # aka GroupID
-        command: DQEnums.Command
-        par1: int
-        par2: int
-        par3: int
-        payload: str
+        def __init__(self, id, public_key, command, par1, par2, par3, payload):
 
-    @dataclass()
+            self.id = id  # aka Type
+            self.public_key = public_key  # aka GroupID
+            self.command = command
+            self.par1 = par1
+            self.par2 = par2
+            self.par3 = par3
+            self.payload = payload
+
     class DQResponse:
-        id: DQEnums.ID
-        public_key: int
-        order: int  # Order of the instrument when used as a member of a sync group
-        payload_length: int
-        payload: chr
+        def __init__(self, id, public_key, order, payload_length, payload):
 
-    @dataclass()
+            self.id = id
+            self.public_key = public_key
+            self.order = order  # Order of the instrument when used as a member of a sync group
+            self.payload_length = payload_length
+            self.payload = payload
+
     class DQAdcData:
-        id: DQEnums.ID
-        public_key: int
-        order: int
-        cumulative_count: int
-        payload_length: int
-        adc_data: int  # note this should be short but python does not have this a a type...
+        def __init__(self, id, public_key, order, cumulative_count, payload_length, adc_data):
+
+            self.id = id
+            self.public_key = public_key
+            self.order = order
+            self.cumulative_count = cumulative_count
+            self.payload_length = payload_length
+            self.adc_data = adc_data # note this should be short but python does not have this a a type...
 
 
-@dataclass()
 class DQPorts:
-    # port numbers are from the loggers perspective
-    logger_discovery_local_port: int  # this is fixed on the device
-    logger_discovery_remote_port: int
+    def __init__(self, logger_discovery_local_port, logger_discovery_remote_port, logger_command_local_port, logger_command_data_client_port):
+        # port numbers are from the loggers perspective
+        self.logger_discovery_local_port = logger_discovery_local_port  # this is fixed on the device
+        self.logger_discovery_remote_port = logger_discovery_remote_port
 
-    logger_command_local_port: int  # this is fixed on the device
-    logger_command_data_client_port: int
+        self.logger_command_local_port = logger_command_local_port  # this is fixed on the device
+        self.logger_command_data_client_port = logger_command_data_client_port
 
 
-@dataclass()
 class DQDeviceConfiguration:
-    encode: DQEnums.Encoding
-    ps: DQEnums.PacketSize
-    s_list: []
-    device_role: DQEnums.DeviceRole
-    device_group_order: int
-    device_group_key_id: int
+    def __init__(self, encode, ps, s_list, device_role, device_group_order, device_group_key_id):
+
+        self.encode = encode
+        self.ps = ps
+        self.s_list = s_list
+        self.device_role = device_role
+        self.device_group_order = device_group_order
+        self.device_group_key_id = device_group_key_id
 
 
-@dataclass()
 class DQSampleConfiguration:
-    dec: int
-    deca: int
-    s_rate: int
+    def __init__(self, dec, deca, s_rate):
+
+        self.dec = dec
+        self.deca = deca
+        self.s_rate = s_rate
 
 
 class DQDataContainer:
-    def __init__(self, device_order, dq_data_structure: DQDataStructures):
+    def __init__(self, device_order, dq_data_structure):
         self.device_order = device_order
         self.dq_data_structure = dq_data_structure
 
@@ -395,7 +389,7 @@ class DataqCommsManager:
         # everything went OK
         return 1
 
-    def configure_and_connect_device(self, configuration: DQDeviceConfiguration, receive_data_handler):
+    def configure_and_connect_device(self, configuration, receive_data_handler):
         name = "configure_and_connect_device"
         self.log.info(name + ": " + repr(configuration))
 
@@ -407,6 +401,7 @@ class DataqCommsManager:
 
         # configure key, connection, role, group
         dq_command = DQCommandResponseStructures.DQCommand(
+            # id=DQEnums.ID.DQCOMMAND,
             id=DQEnums.ID.DQCOMMAND,
             public_key=self.device_configuration.device_group_key_id,
             command=DQEnums.Command.CONNECT,
@@ -420,6 +415,9 @@ class DataqCommsManager:
 
         if not command_ok:
             self.log.error(name + ": command error")
+
+        # debug_DROWA_20201021: just exit here
+        exit()
 
         # configure encoding
         dq_command.command = DQEnums.Command.SECONDCOMMAND
@@ -575,12 +573,20 @@ class DataqCommsManager:
         self.log.info(name + ": " + repr(dq_command))
 
         command_string = ''
-        id_byte = dq_command.id.to_bytes(4, byteorder=self.byte_order, signed=self.is_signed)
-        public_key_byte = dq_command.public_key.to_bytes(4, byteorder=self.byte_order, signed=self.is_signed)
-        command_byte = dq_command.command.to_bytes(4, byteorder=self.byte_order, signed=self.is_signed)
-        par1_byte = dq_command.par1.to_bytes(4, byteorder=self.byte_order, signed=self.is_signed)
-        par2_byte = dq_command.par2.to_bytes(4, byteorder=self.byte_order, signed=self.is_signed)
-        par3_byte = dq_command.par3.to_bytes(4, byteorder=self.byte_order, signed=self.is_signed)
+        # python2 is garbage for byte stuff
+        # id_byte = dq_command.id.to_bytes(4, byteorder=self.byte_order, signed=self.is_signed)
+        # public_key_byte = dq_command.public_key.to_bytes(4, byteorder=self.byte_order, signed=self.is_signed)
+        # command_byte = dq_command.command.to_bytes(4, byteorder=self.byte_order, signed=self.is_signed)
+        # par1_byte = dq_command.par1.to_bytes(4, byteorder=self.byte_order, signed=self.is_signed)
+        # par2_byte = dq_command.par2.to_bytes(4, byteorder=self.byte_order, signed=self.is_signed)
+        # par3_byte = dq_command.par3.to_bytes(4, byteorder=self.byte_order, signed=self.is_signed)
+
+        id_byte = str(dq_command.id).encode()
+        public_key_byte = str(dq_command.public_key).encode()
+        command_byte = str(dq_command.command).encode()
+        par1_byte = str(dq_command.par1).encode()
+        par2_byte = str(dq_command.par2).encode()
+        par3_byte = str(dq_command.par3).encode()
 
         command_string = id_byte + \
                          public_key_byte + \
@@ -697,7 +703,7 @@ class DataqCommsManager:
         else:
             return 0.0
 
-    def set_sample_rate(self, sample_rate_hz: DQEnums.SampleRate):
+    def set_sample_rate(self, sample_rate_hz):
         """
         :param dec: decimation/oversampling value
         :param deca: decimation/oversampling multiplier
@@ -867,20 +873,31 @@ class DataqCommsManager:
         name = "process_response"
         self.log.info(name)
 
-        response_id = int.from_bytes(response_from_logger[0:4], byteorder=self.byte_order)
+        print("Resp from Logger: " + response_from_logger)
+        # response_id = int.from_bytes(response_from_logger[0:4], byteorder=self.byte_order)
+
+        response_id = int(codecs.encode(response_from_logger[0:4], 'hex'), 16)
+        print("responid: " + str(response_id) + " data: " + str(DQEnums.ID.DQADCDATA) + " resp: " + str(
+            DQEnums.ID.DQRESPONSE))
+
+        response_id = int(codecs.encode(response_from_logger[0:4], 'hex'), 32)
+        print("responid: " + str(response_id) + " data: " + str(DQEnums.ID.DQADCDATA) + " resp: " + str(
+            DQEnums.ID.DQRESPONSE))
         # key not implemented to tell different loggers apart
         response_public_key = 0
         responding_device_order = 0
 
         # check if the response carriers a group ID
         if len(response_from_logger) > 8:
-            response_public_key = int.from_bytes(response_from_logger[4:8], byteorder=self.byte_order)
+            # response_public_key = int.from_bytes(response_from_logger[4:8], byteorder=self.byte_order)
+            response_public_key = int(codecs.encode(response_from_logger[4:8], 'hex'), 16)
         else:
             response_public_key = 0
 
         # logger order for multi logger setups
         if len(response_from_logger) > 12:
-            responding_device_order = int.from_bytes(response_from_logger[8:12], byteorder=self.byte_order)
+            # responding_device_order = int.from_bytes(response_from_logger[8:12], byteorder=self.byte_order)
+            responding_device_order = int(codecs.encode(response_from_logger[8:12], 'hex'), 16)
         else:
             responding_device_order = 0
 
@@ -1102,12 +1119,11 @@ class DataqCommsManager:
             self.log.warning(name + ": code to assess response not implemented yet!")
             return 1
         else:
-            self.log.warning(name + ": rejecting unknown command")
+            self.log.warning(name + ": rejecting unknown command: ")
             return 0
 
 
 # fastest, cleanest way to do this
-@dataclass()
 class AnalogVoltages:
     channel = [
         [],
@@ -1123,7 +1139,7 @@ class AnalogVoltages:
 
 
 # make a quick copy of the data
-def dataq_data_handler(data_container: DQDataContainer):
+def dataq_data_handler(data_container):
     name = "consume_data"
     # self.log.info(name)
 
@@ -1208,7 +1224,7 @@ def dataq_data_handler(data_container: DQDataContainer):
     """
 
 
-def voltage_data_source_manager_runnable(voltage_channel_data: np.ndarray, sink_handler):
+def voltage_data_source_manager_runnable(voltage_channel_data, sink_handler):
     name = "voltage_data_source_manager_runnable"
 
     while True:
@@ -1280,14 +1296,14 @@ def voltage_data_source_manager_runnable(voltage_channel_data: np.ndarray, sink_
 
 # Debug level and console print statements will influence scripts ability to handle large amounts of data
 # https://www.loggly.com/ultimate-guide/python-logging-basics/
-logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
+logging.basicConfig(stream=sys.stderr, level=logging.INFO)
 
 voltage_data_source_manager_thread_enable = True
 # channel_data = None
 analog_voltages = None
 
 
-def dummy_handler(voltage_channel_data: np.ndarray):
+def dummy_handler(voltage_channel_data):
     name = "dummy_handler"
     print('dummy handler')
 
@@ -1320,7 +1336,7 @@ def main():
 
     # define channel config - channel 1 must be configured and first in the list even if ch 1 is not used
     voltage_scale = DQMasks.DQ4108.ScanListDefinition.AnalogScale.PN_0V5
-    # from protocol doc: • slist positions must be defined sequentially beginning with position 0
+    # from protocol doc: slist positions must be defined sequentially beginning with position 0
     # DO NOT skip channels or mix the order as this will completely screw up the measurement capture.
     scan_list_configuration = {
         DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch1: voltage_scale
@@ -1381,12 +1397,12 @@ def main():
     # TBD
 
     # start a demo thread to print out the voltages
-    voltage_data_source_manager_thread.start()
+    # voltage_data_source_manager_thread.start()
 
     # sync start/start acquisition
-    dataq_comms.start_acquisition()
+    # dataq_comms.start_acquisition()
 
-    matplot_sink.show_graph()
+    # matplot_sink.show_graph()
 
     input("Press enter to stop...")
 
