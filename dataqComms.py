@@ -418,7 +418,7 @@ class DataqCommsManager:
             self.log.error(name + ": command error")
 
         # debug_DROWA_20201021: just exit here
-        exit()
+        # exit()
 
         # configure encoding
         dq_command.command = DQEnums.Command.SECONDCOMMAND
@@ -881,16 +881,9 @@ class DataqCommsManager:
         name = "process_response"
         self.log.info(name)
 
-        print("Resp from Logger: " + response_from_logger)
         # response_id = int.from_bytes(response_from_logger[0:4], byteorder=self.byte_order)
+        response_id = struct.unpack('i', response_from_logger[0:4])[0]
 
-        response_id = int(codecs.encode(response_from_logger[0:4], 'hex'), 16)
-        print("responid: " + str(response_id) + " data: " + str(DQEnums.ID.DQADCDATA) + " resp: " + str(
-            DQEnums.ID.DQRESPONSE))
-
-        response_id = int(codecs.encode(response_from_logger[0:4], 'hex'), 32)
-        print("responid: " + str(response_id) + " data: " + str(DQEnums.ID.DQADCDATA) + " resp: " + str(
-            DQEnums.ID.DQRESPONSE))
         # key not implemented to tell different loggers apart
         response_public_key = 0
         responding_device_order = 0
@@ -898,14 +891,14 @@ class DataqCommsManager:
         # check if the response carriers a group ID
         if len(response_from_logger) > 8:
             # response_public_key = int.from_bytes(response_from_logger[4:8], byteorder=self.byte_order)
-            response_public_key = int(codecs.encode(response_from_logger[4:8], 'hex'), 16)
+            response_public_key = struct.unpack('i', response_from_logger[4:8])[0]
         else:
             response_public_key = 0
 
         # logger order for multi logger setups
         if len(response_from_logger) > 12:
             # responding_device_order = int.from_bytes(response_from_logger[8:12], byteorder=self.byte_order)
-            responding_device_order = int(codecs.encode(response_from_logger[8:12], 'hex'), 16)
+            responding_device_order = struct.unpack('i', response_from_logger[8:12])[0]
         else:
             responding_device_order = 0
 
@@ -921,8 +914,10 @@ class DataqCommsManager:
             # init to something so its not a null reference
             current_channel_index = 0
 
-            cumulative_sample_count_from_device = int.from_bytes(response_from_logger[12:16], byteorder=self.byte_order)
-            payload_sample_count_from_device = int.from_bytes(response_from_logger[16:20], byteorder=self.byte_order)
+            # cumulative_sample_count_from_device = int.from_bytes(response_from_logger[12:16], byteorder=self.byte_order)
+            cumulative_sample_count_from_device = struct.unpack('i', response_from_logger[12:16])[0]
+            # payload_sample_count_from_device = int.from_bytes(response_from_logger[16:20], byteorder=self.byte_order)
+            payload_sample_count_from_device = struct.unpack('i', response_from_logger[16:20])[0]
 
             tracked_samples_received_per_device = self.dataq_group_container[
                 responding_device_order].dq_data_structure.cumulative_samples_received_this_device
@@ -1023,8 +1018,9 @@ class DataqCommsManager:
             # of channels being read in
             for payload_index in range(payload_sample_count_from_device):
                 sample_start_index = 20 + payload_index * 2
-                raw_bytes = int.from_bytes(response_from_logger[sample_start_index:sample_start_index + 2],
-                                           byteorder=self.byte_order)
+                # raw_bytes = int.from_bytes(response_from_logger[sample_start_index:sample_start_index + 2],
+                #                           byteorder=self.byte_order)
+                raw_bytes = struct.unpack('H', response_from_logger[sample_start_index:sample_start_index + 2])
 
                 current_channel_index = (payload_index + self.dataq_group_container[
                     responding_device_order].dq_data_structure.channel_packet_carryover_index) % len(
@@ -1118,7 +1114,8 @@ class DataqCommsManager:
 
         elif response_id == DQEnums.ID.DQRESPONSE:
             self.log.info(name + ": processing DQRESPONSE")
-            payload_sample_count = int.from_bytes(response_from_logger[12:16], byteorder=self.byte_order)
+            # payload_sample_count = int.from_bytes(response_from_logger[12:16], byteorder=self.byte_order)
+            payload_sample_count = struct.unpack('i', response_from_logger[12:16])[0]
             payload = response_from_logger[16:16 + payload_sample_count]
             payload = payload.decode("utf-8").replace('\r', '')
             self.log.debug(name + ": response: " + payload)
@@ -1405,12 +1402,12 @@ def main():
     # TBD
 
     # start a demo thread to print out the voltages
-    # voltage_data_source_manager_thread.start()
+    voltage_data_source_manager_thread.start()
 
     # sync start/start acquisition
-    # dataq_comms.start_acquisition()
+    dataq_comms.start_acquisition()
 
-    # matplot_sink.show_graph()
+    matplot_sink.show_graph()
 
     input("Press enter to stop...")
 
