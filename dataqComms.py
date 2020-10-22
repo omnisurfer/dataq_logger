@@ -1358,7 +1358,7 @@ def main():
     }
 
     # buffer should be sized so that one periods worth of data is rendered once a second
-    sample_rate = DQEnums.SampleRate.SAMPLE_100HZ
+    sample_rate = DQEnums.SampleRate.SAMPLE_10HZ
     per_channel_data_buffer_size = sample_rate
     voltage_positive_reference = 0.5
     voltage_negative_reference = -1 * voltage_positive_reference
