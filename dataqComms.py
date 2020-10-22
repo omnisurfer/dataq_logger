@@ -1345,12 +1345,12 @@ def main():
     channel_data = np.zeros(shape=(len(scan_list_configuration), per_channel_data_buffer_size), dtype=float)
 
     # setup the matplot sink
-    matplot_sink = MatplotSink(len(scan_list_configuration), per_channel_data_buffer_size, voltage_negative_reference, voltage_positive_reference, 1)
+    # matplot_sink = MatplotSink(len(scan_list_configuration), per_channel_data_buffer_size, voltage_negative_reference, voltage_positive_reference, 1)
 
     # setup the thread that will pass data onto the sink
     global voltage_data_source_manager_thread_enable
     voltage_data_source_manager_thread = threading.Thread(target=voltage_data_source_manager_runnable,
-                                                          args=(channel_data, matplot_sink.voltage_data_sink_handler))
+                                                          args=(channel_data, dummy_handler)) # matplot_sink.voltage_data_sink_handler))
 
     dataq_comms = DataqCommsManager(dq_ports, logger_ip, client_ip)
 
