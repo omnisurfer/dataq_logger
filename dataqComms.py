@@ -1411,7 +1411,8 @@ def main():
 
     matplot_sink.show_graph()
 
-    input("Press enter to stop...")
+    # calling input here seems to cause python2.7 issues with detecting EOF causing a hang
+    # input("Press enter to stopXXX...")
 
     matplot_sink.close_graph()
 
@@ -1426,5 +1427,4 @@ def main():
 
 
 if __name__ == "__main__":
-    # cProfile.run('main()')
     main()
