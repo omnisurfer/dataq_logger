@@ -1020,7 +1020,7 @@ class DataqCommsManager:
                 sample_start_index = 20 + payload_index * 2
                 # raw_bytes = int.from_bytes(response_from_logger[sample_start_index:sample_start_index + 2],
                 #                           byteorder=self.byte_order)
-                raw_bytes = struct.unpack('H', response_from_logger[sample_start_index:sample_start_index + 2])
+                raw_bytes = struct.unpack('H', response_from_logger[sample_start_index:sample_start_index + 2])[0]
 
                 current_channel_index = (payload_index + self.dataq_group_container[
                     responding_device_order].dq_data_structure.channel_packet_carryover_index) % len(
@@ -1041,7 +1041,7 @@ class DataqCommsManager:
 
                 # print("raw: {0:16b}".format(raw_bytes))
 
-                byte_modifier = int('0xfffc', 0)
+                byte_modifier = 0xfffc
 
                 result = int(raw_bytes & byte_modifier)
 
@@ -1053,7 +1053,8 @@ class DataqCommsManager:
                     result = result * -1
 
                 # convert count into a voltage, from page 67 of Protocol pdf
-                calculated_voltage = configured_voltage_scale * (result / 32768)
+                count_ratio = float(result) / 32768
+                calculated_voltage = configured_voltage_scale * count_ratio
 
                 if current_channel_in_list == DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch1:
                     self.dataq_group_container[responding_device_order].dq_data_structure.analog1.append(
@@ -1262,13 +1263,14 @@ def voltage_data_source_manager_runnable(voltage_channel_data, sink_handler):
             sink_handler(voltage_channel_data)
 
             """
-            print("\nch1: ", end=" ")
+            print("\nch1: ")
             for v in voltage_channel_data[0]:
-                print("{:10.2f}".format(v), end=" ")
+                print("{:10.2f}".format(v))
 
-            print("\nch2: ", end=" ")
+            print("\nch2: ")
             for v in voltage_channel_data[1]:
-                print("{:10.2f}".format(v), end=" ")
+                print("{:10.2f}".format(v))
+
             
             print("\nch3: ", end=" ")            
             for v in voltage_channel_data[2]:
@@ -1301,7 +1303,7 @@ def voltage_data_source_manager_runnable(voltage_channel_data, sink_handler):
 
 # Debug level and console print statements will influence scripts ability to handle large amounts of data
 # https://www.loggly.com/ultimate-guide/python-logging-basics/
-logging.basicConfig(stream=sys.stderr, level=logging.INFO)
+logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
 
 voltage_data_source_manager_thread_enable = True
 # channel_data = None
@@ -1346,17 +1348,17 @@ def main():
     scan_list_configuration = {
         DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch1: voltage_scale
         , DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch2: voltage_scale
-        , DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch3: voltage_scale
-        , DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch4: voltage_scale
+        #, DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch3: voltage_scale
+        #, DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch4: voltage_scale
 
-        , DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch5: voltage_scale
-        , DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch6: voltage_scale
-        , DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch7: voltage_scale
-        , DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch8: voltage_scale
+        #, DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch5: voltage_scale
+        #, DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch6: voltage_scale
+        #, DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch7: voltage_scale
+        #, DQMasks.DQ4108.ScanListDefinition.AnalogIn.ch8: voltage_scale
     }
 
     # buffer should be sized so that one periods worth of data is rendered once a second
-    sample_rate = DQEnums.SampleRate.SAMPLE_100HZ
+    sample_rate = DQEnums.SampleRate.SAMPLE_1000HZ
     per_channel_data_buffer_size = sample_rate
     voltage_positive_reference = 0.5
     voltage_negative_reference = -1 * voltage_positive_reference
@@ -1389,7 +1391,7 @@ def main():
     # create configuration
     dataq_config = DQDeviceConfiguration(
         encode=DQEnums.Encoding.BINARY_DEFAULT,
-        ps=DQEnums.PacketSize.PS_512_BYTES,
+        ps=DQEnums.PacketSize.PS_16_BYTES_DEFAULT,
         s_list=scan_list_configuration,
         device_role=DQEnums.DeviceRole.MASTER,
         device_group_key_id=my_group_key_id,
